@@ -36,15 +36,9 @@ UNABLE_KEYWORDS = [
     "unanswerable"
 ]
 
-# If True, the agent stops immediately if Pass 1 says 'Unable'.
-# Set to False for the mixed test, because Pass 1 might falsely reject a valid question
-# that Pass 2 (which has OCR text) could actually answer.
-EARLY_EXIT_ON_UNABLE = False 
-
-# How to resolve disagreements between Pass 1 and Pass 2
-# "pass2_authority": Pass 2 wins because it has OCR/NLP context
-# "consensus_or_unable": Strict consensus required, otherwise Unable
-DISAGREEMENT_RESOLUTION = "pass2_authority"
+# If set to a value < 1.0 (e.g. 0.1), only processes that percentage of the dataset.
+# Extremely useful for testing the pipeline on a subset before committing to a 15h run.
+SAMPLING_PERCENTAGE = 0.1
 
 # Thresholds for GLiNER entity detection
 GLINER_THRESHOLDS = {

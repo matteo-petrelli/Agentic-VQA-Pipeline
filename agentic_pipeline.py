@@ -3,18 +3,63 @@ import config
 from prompt_library import build_layout_prompt, build_unified_prompt
 
 def is_unable(answer: str) -> bool:
-    """Checks if the given answer means 'Unable to determine'."""
     ans_lower = str(answer).strip().lower()
     for kw in config.UNABLE_KEYWORDS:
         if kw in ans_lower:
             return True
     return False
 
-def clean_answer(answer: str) -> str:
-    ans = str(answer).strip()
-    if ans.lower().startswith("final answer:"):
-        ans = ans[len("final answer:"):].strip()
-    return ans
+def parse_response(response: str):
+    """
+    Parses the 2-line structured output:
+    Answer: [ans]
+    Confidence: [High/Medium/Low]
+    Returns (answer_string, numeric_confidence_1_to_3)
+    """
+    ans = "Unable to determine"
+    conf_val = 1 # Default to Low
+    
+    lines = str(response).strip().split('\n')
+    found_ans = False
+    
+    for line in lines:
+        line_lower = line.lower()
+        if line_lower.startswith("answer:"):
+            ans = line[len("answer:"):].strip()
+            found_ans = True
+        elif line_lower.startswith("confidence:"):
+            c = line[len("confidence:"):].strip().lower()
+            if "high" in c: conf_val = 3
+            elif "medium" in c: conf_val = 2
+            else: conf_val = 1
+            
+    # Fallback if VLM ignores format
+    if not found_ans and lines:
+        ans = lines[0].replace("Final Answer:", "").strip()
+        
+    return ans, conf_val
+
+def aggregate_page_answers(answers_data):
+    """
+    Given a list of {"answer": str, "confidence": int},
+    finds the consensus answer across pages.
+    """
+    best_ans = "Unable to determine"
+    best_conf = 0
+    
+    for item in answers_data:
+        ans = item["answer"]
+        conf = item["confidence"]
+        
+        if conf > best_conf:
+            best_ans = ans
+            best_conf = conf
+        elif conf == best_conf:
+            # If tied, prefer a concrete answer over 'Unable'
+            if not is_unable(ans) and is_unable(best_ans):
+                best_ans = ans
+                
+    return best_ans, best_conf
 
 class AgenticPipeline:
     def __init__(self, engine):
@@ -34,32 +79,30 @@ class AgenticPipeline:
         print("  -> Running Pass 1 (Layout)...")
         for img_path in image_paths:
             prompt1 = build_layout_prompt(question)
-            ans1 = self.engine.call_vlm(prompt1, img_path)
-            all_pass1_answers.append(clean_answer(ans1))
+            ans_raw = self.engine.call_vlm(prompt1, img_path)
+            ans, conf = parse_response(ans_raw)
+            all_pass1_answers.append({"answer": ans, "confidence": conf, "raw": ans_raw})
             
-        # If ALL pages in Pass 1 yield "Unable" and early exit is enabled
-        if config.EARLY_EXIT_ON_UNABLE and all(is_unable(a) for a in all_pass1_answers):
-            print("  ✓ Early Exit: Pass 1 is UNABLE")
+        pass1_ans, pass1_conf = aggregate_page_answers(all_pass1_answers)
+            
+        # Early Exit: If the best visual guess is "Unable" AND confidence is High
+        if is_unable(pass1_ans) and pass1_conf == 3:
+            print("  ✓ Early Exit: Pass 1 is UNABLE with HIGH confidence.")
             return {
                 "final_answer": "Unable to determine",
                 "pass_reached": 1,
                 "pass1_answers": all_pass1_answers,
                 "pass2_answers": []
             }
-            
-        # If we reach here, either Pass 1 gave an answer, or early exit is disabled
-        pass1_consensus = next((a for a in all_pass1_answers if not is_unable(a)), all_pass1_answers[0])
 
         # =====================================================================
         # PASS 2: Unified Prompt (DOTS.OCR + GLiNER tags)
         # =====================================================================
-        print("  -> Escalating to Pass 2 (Unified OCR) for deep analysis...")
+        print(f"  -> Escalarion needed (P1={pass1_ans}, Conf={pass1_conf}). Running Pass 2...")
         for i, img_path in enumerate(image_paths):
             print(f"     [+] Processing OCR for page {i+1}...")
-            # 1. OCR structured extraction
             layout_objs = self.engine.get_layout(img_path)
             
-            # 2. Format it into structured text like "[Title]: Text content"
             structured_blocks = []
             for obj in layout_objs:
                 cat = obj.get("category", "Text")
@@ -67,11 +110,9 @@ class AgenticPipeline:
                 structured_blocks.append(f"[{cat}]: {txt}")
             raw_ocr_text = "\n".join(structured_blocks)
             
-            # 3. Apply GLiNER to OCR text and Question
             tagged_text, doc_entities = self.engine.tag_text_with_gliner(raw_ocr_text)
             annotated_question, question_entities = self.engine.tag_text_with_gliner(question)
             
-            # 4. Build & Call
             prompt2 = build_unified_prompt(
                 question=question,
                 annotated_question=annotated_question,
@@ -80,36 +121,37 @@ class AgenticPipeline:
                 doc_entities=doc_entities,
                 page_info=page_info
             )
-            ans2 = self.engine.call_vlm(prompt2, img_path)
-            all_pass2_answers.append(clean_answer(ans2))
+            ans_raw = self.engine.call_vlm(prompt2, img_path)
+            ans, conf = parse_response(ans_raw)
+            all_pass2_answers.append({"answer": ans, "confidence": conf, "raw": ans_raw})
 
-        pass2_consensus = next((a for a in all_pass2_answers if not is_unable(a)), all_pass2_answers[0])
+        pass2_ans, pass2_conf = aggregate_page_answers(all_pass2_answers)
         
         # =====================================================================
-        # DECISION LOGIC
+        # DECISION LOGIC (Confidence Based Routing)
         # =====================================================================
-        is_p1_unable = is_unable(pass1_consensus)
-        is_p2_unable = is_unable(pass2_consensus)
-        
         # 1. Consensus
-        if pass1_consensus.lower() == pass2_consensus.lower():
-            final_ans = pass1_consensus
-            print(f"  ✓ Consensus Reached: {final_ans}")
+        if pass1_ans.lower() == pass2_ans.lower():
+            final_ans = pass1_ans
+            print(f"  ✓ Consensus Reached: {final_ans} (P1 Conf: {pass1_conf}, P2 Conf: {pass2_conf})")
             
-        # 2. Disagreement
+        # 2. Disagreement - Confidence Tiebreaker
         else:
-            if config.DISAGREEMENT_RESOLUTION == "pass2_authority":
-                # Pass 2 wins because it read the actual OCR text
-                final_ans = pass2_consensus
-                print(f"  ✓ Disagreement (P1: {pass1_consensus} vs P2: {pass2_consensus}). Trusting Pass 2 -> {final_ans}")
+            if pass1_conf > pass2_conf:
+                final_ans = pass1_ans
+                print(f"  ✓ Disagreement. P1 wins by Confidence ({pass1_conf} > {pass2_conf}) -> {final_ans}")
+            elif pass2_conf > pass1_conf:
+                final_ans = pass2_ans
+                print(f"  ✓ Disagreement. P2 wins by Confidence ({pass2_conf} > {pass1_conf}) -> {final_ans}")
             else:
-                # Strict consensus required, default to unable
-                final_ans = "Unable to determine"
-                print(f"  ✓ Disagreement (P1: {pass1_consensus} vs P2: {pass2_consensus}). Strict consensus failed -> UNABLE")
+                # Tie
+                final_ans = pass2_ans
+                print(f"  ✓ Disagreement. Tie ({pass1_conf}=={pass2_conf}). P2 wins by Authority -> {final_ans}")
 
         return {
             "final_answer": final_ans,
             "pass_reached": 2,
             "pass1_answers": all_pass1_answers,
-            "pass2_answers": all_pass2_answers
+            "pass2_answers": all_pass2_answers,
+            "final_confidence": max(pass1_conf, pass2_conf)
         }

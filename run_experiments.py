@@ -31,9 +31,16 @@ def main():
         input_data = json.load(f)
         
     questions = input_data.get("corrupted_questions", [])
-    print(f"Loaded {len(questions)} questions from {config.INPUT_JSON_PATH}")
     
-    # 2. Check Checkpoint
+    # 2. Apply Sampling
+    if config.SAMPLING_PERCENTAGE < 1.0:
+        limit = max(1, int(len(questions) * config.SAMPLING_PERCENTAGE))
+        questions = questions[:limit]
+        print(f"Sampling enabled: using {len(questions)} questions ({config.SAMPLING_PERCENTAGE*100}% of total).")
+    else:
+        print(f"Loaded {len(questions)} questions from {config.INPUT_JSON_PATH}")
+    
+    # 3. Check Checkpoint
     checkpoint_data = load_checkpoint(config.OUTPUT_JSON_PATH)
     processed_count = len(checkpoint_data.get("corrupted_questions", []))
     print(f"Found {processed_count} already processed questions. Resuming...")
@@ -42,11 +49,11 @@ def main():
         print("All questions have been processed! Exiting.")
         return
         
-    # 3. Initialize Engine
+    # 4. Initialize Engine
     engine = PreprocessingEngine()
     pipeline = AgenticPipeline(engine)
     
-    # 4. Process Loop
+    # 5. Process Loop
     for i in tqdm(range(processed_count, len(questions)), desc="Processing"):
         item = questions[i]
         q_text = item.get("corrupted_question", "")
