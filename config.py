@@ -17,13 +17,11 @@ USE_4BIT_DOTS = True
 GLINER_MODEL_PATH = "urchade/gliner_medium-v2.1"
 
 # =============================================================================
-# I/O PATHS
+# I/O PATHS (KAGGLE DEFAULTS)
 # =============================================================================
-# During Kaggle execution, these will be overwritten or passed as arguments,
-# but we define sensible defaults for local testing.
-INPUT_JSON_PATH = "../DUDE_mixed_test.json"
-IMAGE_DIR = "../DUDE_train-val-test_binaries/images/train"
-OUTPUT_JSON_PATH = "agentic_pipeline_results.json"
+INPUT_JSON_PATH = "/kaggle/input/dude-questions/DUDE_mixed_test.json"
+IMAGE_DIR = "/kaggle/input/dude-train/content/DUDE_train-val-test_binaries/images/train"
+OUTPUT_JSON_PATH = "/kaggle/working/agentic_pipeline_results.json"
 
 # =============================================================================
 # PIPELINE HYPERPARAMETERS
