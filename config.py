@@ -36,9 +36,15 @@ UNABLE_KEYWORDS = [
     "unanswerable"
 ]
 
-# If True, if ANY of the two passes says "Unable", the final decision is "Unable".
-# This enforces a strong bias toward detecting corrupted questions.
-BIAS_TOWARD_UNABLE = True 
+# If True, the agent stops immediately if Pass 1 says 'Unable'.
+# Set to False for the mixed test, because Pass 1 might falsely reject a valid question
+# that Pass 2 (which has OCR text) could actually answer.
+EARLY_EXIT_ON_UNABLE = False 
+
+# How to resolve disagreements between Pass 1 and Pass 2
+# "pass2_authority": Pass 2 wins because it has OCR/NLP context
+# "consensus_or_unable": Strict consensus required, otherwise Unable
+DISAGREEMENT_RESOLUTION = "pass2_authority"
 
 # Thresholds for GLiNER entity detection
 GLINER_THRESHOLDS = {

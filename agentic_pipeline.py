@@ -37,8 +37,8 @@ class AgenticPipeline:
             ans1 = self.engine.call_vlm(prompt1, img_path)
             all_pass1_answers.append(clean_answer(ans1))
             
-        # If ALL pages in Pass 1 yield "Unable", we early exit.
-        if all(is_unable(a) for a in all_pass1_answers):
+        # If ALL pages in Pass 1 yield "Unable" and early exit is enabled
+        if config.EARLY_EXIT_ON_UNABLE and all(is_unable(a) for a in all_pass1_answers):
             print("  ✓ Early Exit: Pass 1 is UNABLE")
             return {
                 "final_answer": "Unable to determine",
@@ -47,13 +47,13 @@ class AgenticPipeline:
                 "pass2_answers": []
             }
             
-        # If we reach here, Pass 1 gave at least one actual answer.
+        # If we reach here, either Pass 1 gave an answer, or early exit is disabled
         pass1_consensus = next((a for a in all_pass1_answers if not is_unable(a)), all_pass1_answers[0])
 
         # =====================================================================
         # PASS 2: Unified Prompt (DOTS.OCR + GLiNER tags)
         # =====================================================================
-        print("  -> Pass 1 gave an answer. Escalating to Pass 2 (Unified OCR)...")
+        print("  -> Escalating to Pass 2 (Unified OCR) for deep analysis...")
         for i, img_path in enumerate(image_paths):
             print(f"     [+] Processing OCR for page {i+1}...")
             # 1. OCR structured extraction
@@ -88,20 +88,24 @@ class AgenticPipeline:
         # =====================================================================
         # DECISION LOGIC
         # =====================================================================
-        # 1. Bias rule: If Pass 2 is unable, final is unable.
-        if config.BIAS_TOWARD_UNABLE and all(is_unable(a) for a in all_pass2_answers):
-            final_ans = "Unable to determine"
-            print("  ✓ Conflict: Pass 2 is UNABLE. Bias applied -> UNABLE")
-            
-        # 2. Consensus: If Pass 1 and Pass 2 give the exact same answer (ignoring case)
-        elif pass1_consensus.lower() == pass2_consensus.lower():
+        is_p1_unable = is_unable(pass1_consensus)
+        is_p2_unable = is_unable(pass2_consensus)
+        
+        # 1. Consensus
+        if pass1_consensus.lower() == pass2_consensus.lower():
             final_ans = pass1_consensus
             print(f"  ✓ Consensus Reached: {final_ans}")
             
-        # 3. Disagreement -> Unable
+        # 2. Disagreement
         else:
-            final_ans = "Unable to determine"
-            print(f"  ✓ Disagreement (P1: {pass1_consensus} vs P2: {pass2_consensus}) -> UNABLE")
+            if config.DISAGREEMENT_RESOLUTION == "pass2_authority":
+                # Pass 2 wins because it read the actual OCR text
+                final_ans = pass2_consensus
+                print(f"  ✓ Disagreement (P1: {pass1_consensus} vs P2: {pass2_consensus}). Trusting Pass 2 -> {final_ans}")
+            else:
+                # Strict consensus required, default to unable
+                final_ans = "Unable to determine"
+                print(f"  ✓ Disagreement (P1: {pass1_consensus} vs P2: {pass2_consensus}). Strict consensus failed -> UNABLE")
 
         return {
             "final_answer": final_ans,
