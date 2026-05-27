@@ -1,0 +1,72 @@
+def build_layout_prompt(question: str) -> str:
+    """
+    PASS 1: Layout-focused prompt.
+    Does not require OCR text. Forces the VLM to reason purely on visual layout.
+    """
+    prompt = (
+        "You are a highly precise AI assistant for document layout analysis.\n"
+        "Your task is to reason spatially about the structure and layout of document pages to answer the question.\n"
+        "Do not infer from text meaning — focus only on visual and positional reasoning.\n\n"
+        "### LAYOUT REASONING STEPS ###\n"
+        "1. **Identify Key Entities:** Extract the main entities or visual cues implied by the question.\n"
+        f"   Question: '{question}'\n\n"
+        "2. **In-Page Spatial Analysis:**\n"
+        "   - Divide each page into four regions:\n"
+        "     [Q1] Top-Left | [Q2] Top-Right | [Q3] Bottom-Left | [Q4] Bottom-Right\n"
+        "   - Locate where each relevant entity or element appears within its page.\n"
+        "   - Assess spatial coherence: does the entity consistently appear in a specific region (top, bottom, etc.)?\n\n"
+        "3. **Cross-Page Verification:**\n"
+        "   - If multiple pages exist, compare spatial zones across them.\n"
+        "   - Confirm consistent positioning of similar entities across pages (e.g., always near top-left).\n"
+        "   - Treat inconsistent spatial locations as unreliable evidence.\n\n"
+        "4. **Layout Heuristics (for reasoning support):**\n"
+        "   - Titles and headers usually appear in the upper regions.\n"
+        "   - Tables and core facts often appear mid or bottom-left.\n"
+        "   - References and footnotes are typically bottom-right.\n\n"
+        "5. **Formulate Spatially-Consistent Answer:**\n"
+        "   - If entities appear consistently in the expected regions, provide a concise factual answer.\n"
+        "   - If layout evidence is ambiguous, inconsistent, or unsupported, respond 'Unable to determine'.\n\n"
+        "### RESPONSE FORMAT ###\n"
+        "Return only the final verified answer.\n"
+        "If uncertain, inconsistent, or unsupported by layout reasoning, respond exactly with 'Unable to determine'.\n\n"
+        f"Question: {question}\n"
+        "Final Answer:"
+    )
+    return prompt
+
+def build_unified_prompt(question: str, annotated_question: str, structured_tag_text: str, question_entities: list, doc_entities: list, page_info: str) -> str:
+    """
+    PASS 2: The Unified Prompt (DocEl + NLP + Spatial + Contradiction).
+    Requires full preprocessing (DOTS.OCR + GLiNER tagging).
+    """
+    prompt = (
+        "You are a highly precise AI assistant for document analysis.\n"
+        "Your task is to answer questions about the document image content precisely.\n\n"
+        "The OCR text has been enriched with NLP entity tags (e.g., <year_numerical_value>, <time_information>, <event>), "
+        "so that important elements are explicitly marked and it is divided into the specific object elements from which the OCR was retrieved.\n\n"
+        "DOCUMENT CONTENT\n"
+        f"{structured_tag_text}\n\n"
+        "We provide the list of annotated entities in the question and in the document:\n"
+        f"- Entities in the question: {question_entities}\n"
+        f"- Entities in the document: {doc_entities}\n\n"
+        "GUIDELINES\n"
+        "Analyze the user's question by following these steps:\n"
+        f"1. Understand the Question: Break down the question: '{annotated_question}' into its key elements.\n"
+        "2. In-Page Spatial Analysis:\n"
+        "   - Divide each page into four regions:\n"
+        "     [Q1] Top-Left | [Q2] Top-Right | [Q3] Bottom-Left | [Q4] Bottom-Right\n"
+        "   - Locate where each relevant entity or element appears within its page.\n"
+        "   - Assess spatial coherence: does the entity consistently appear in a specific region (top, bottom, etc.)?\n\n"        
+        "3. Cross-Page Verification:\n"
+        "   - If multiple pages exist, compare spatial zones across them.\n"
+        f"   - **Consider document length: {page_info}** Only provide an answer after checking all pages.\n\n"
+        "4. Identify and Categorize Document Elements: Examine the document content to identify the distinct elements present (e.g., [Title], [Text], [Table], [Picture], etc).\n"
+        "5. Check for Key Question Entities in Each Document Element: Look for matches between identified question entities (<...>...</...>) inside document elements.\n"
+        "6. Check for Consistency Between Document Elements and Question Context: Evaluate whether the element containing the match (e.g., [Title], [Plain Text], [Endnote]) aligns with the question’s intent. If information appears only in secondary elements or mismatched contexts, treat as invalid.\n"
+        "7. Verify Context: Check if the context around the entities (the sentence, section, or page) is consistent with what the question is asking.\n"
+        "8. Resolve Ambiguities: If multiple matches exist, choose the one that best fits the context implied by the question.\n"        
+        "9. Check for Contradictions between the content and the Question: Examine whether any document element, entities or spatial conformation contains information that directly contradicts the facts or assumptions stated in the question. If any element presents a clear contradiction or conflicting information, respond 'Unable to determine'.\n"
+        "10. Formulate the Answer: If a valid and consistent match exists, provide a concise factual answer (single word or short phrase). If entities are missing, contexts are mismatched, or any contradiction is detected, respond 'Unable to determine'.\n\n"
+        "Final Answer:"
+    )
+    return prompt
