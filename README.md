@@ -69,24 +69,50 @@ Question + Document Image(s)
 
 ## Setup (Kaggle)
 
+### Prerequisites
+1. **GPU enabled**: Settings → Accelerator → GPU T4 x2 or P100
+2. **Add 3 datasets as Input**:
+   - Your repo upload (e.g., `agentic-pipeline`)
+   - `dude-train` — document images
+   - `dude-questions` — JSON with corrupted/original questions
+
+### Cell 1 — Install & Start Ollama + Pull Model
 ```python
-# 1. Install & start Ollama
-!curl -fsSL https://ollama.com/install.sh | sh
 import subprocess, time
+
+!curl -fsSL https://ollama.com/install.sh | sh
 subprocess.Popen(["ollama", "serve"])
 time.sleep(5)
 
-# 2. Pull model
-!ollama pull gemma3:4b
+MODEL = "gemma3:4b"  # Change per test: "qwen2.5-vl:3b", "phi3.5"
+!ollama pull {MODEL}
+```
 
-# 3. Install deps
-!pip install -q gliner paddleocr bitsandbytes
+### Cell 2 — Install Dependencies
+```python
+!pip install -q gliner paddleocr bitsandbytes nltk
+```
 
-# 4. Add repo to path & run
+### Cell 3 — Configure & Override
+```python
 import sys
 sys.path.insert(0, "/kaggle/input/agentic-pipeline")
+
+import config
+config.OLLAMA_VLM = MODEL
+config.SAMPLING_PERCENTAGE = 0.1  # 10% for quick test, 1.0 for full run
+```
+
+### Cell 4 — Run Pipeline
+```python
 from run_experiments import main
 main()
+```
+
+### Cell 5 — Evaluate Results
+```python
+from evaluate_results import evaluate_results
+evaluate_results(config.OUTPUT_JSON_PATH)
 ```
 
 ## Evaluation Metrics
