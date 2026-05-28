@@ -40,8 +40,17 @@ SAMPLING_PERCENTAGE = 0.1
 
 # Thresholds for GLiNER entity detection
 GLINER_THRESHOLDS = {
-    "default": 0.5,
-    "time_information": 0.4,
-    "person_name": 0.6,
-    "numerical_value": 0.5
+    "document_position_information": 0.75,
+    "page_number_information": 0.75,
+    "page_number_numerical_value": 0.8,
+    "document_element_type": 0.8,
+    "document_element_information": 0.8,
+    "document_structure_information": 0.8,
+    "postal_code_information": 0.8,
+    "postal_code_numerical_value": 0.78,
+    "date_information": 0.75,
+    "year_numerical_value": 0.7,
+    "job_title_information": 0.8,
+    "job_title_name": 0.9,
+    "default": 0.75,
 }
