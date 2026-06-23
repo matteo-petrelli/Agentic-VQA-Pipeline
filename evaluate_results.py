@@ -1,15 +1,25 @@
+"""
+Evaluation script for the Agentic VQA Pipeline.
+
+Computes QUR, FUR, F1, confusion matrix, and ReAct-specific metrics
+(average steps, tool usage frequency, forced exits).
+"""
 import json
 import argparse
-import numpy as np
+from collections import Counter
+
 
 def is_unable(answer: str) -> bool:
+    """Check if an answer indicates the question is unanswerable."""
     ans_lower = str(answer).strip().lower()
     for kw in ["unable to determine", "unable", "cannot determine", "unanswerable"]:
         if kw in ans_lower:
             return True
     return False
 
+
 def evaluate_results(result_file):
+    """Evaluate pipeline results and print metrics."""
     with open(result_file, "r", encoding="utf-8") as f:
         data = json.load(f)
         
@@ -18,27 +28,38 @@ def evaluate_results(result_file):
         print("No questions found in the result file.")
         return
 
-    # Metrics
+    # Core Metrics
     metrics = {
         "corrupted": {"total": 0, "unable": 0, "c1_tot": 0, "c1_un": 0, "c2_tot": 0, "c2_un": 0, "c3_tot": 0, "c3_un": 0},
         "original":  {"total": 0, "unable": 0, "c1_tot": 0, "c1_un": 0, "c2_tot": 0, "c2_un": 0, "c3_tot": 0, "c3_un": 0}
     }
     
-    pass1_exits = 0
-    pass2_exits = 0
+    # ReAct-specific metrics
+    all_steps = []
+    all_tools = Counter()
+    forced_exits = 0
+    step_distribution = Counter()
 
     for q in questions:
         agent_res = q.get("agentic_result", {})
         final_ans = agent_res.get("final_answer", "Error")
         is_un = is_unable(final_ans)
         
-        pass_reached = agent_res.get("pass_reached", 0)
-        if pass_reached == 1: pass1_exits += 1
-        elif pass_reached == 2: pass2_exits += 1
+        # ReAct metrics
+        steps = agent_res.get("steps", 0)
+        all_steps.append(steps)
+        step_distribution[steps] += 1
         
+        tools = agent_res.get("tools_used", [])
+        for tool in tools:
+            all_tools[tool] += 1
+        
+        if agent_res.get("forced_exit", False):
+            forced_exits += 1
+        
+        # Core classification metrics
         is_corr = q.get("is_corrupted", True)
         comp = q.get("complexity", 1)
-        
         group = "corrupted" if is_corr else "original"
         
         metrics[group]["total"] += 1
@@ -56,38 +77,47 @@ def evaluate_results(result_file):
             if is_un: metrics[group]["c3_un"] += 1
 
     # --- Calculations ---
-    # QUR: True Positive Rate (corrupted questions classified as unable)
     tot_corr = metrics["corrupted"]["total"]
     qur = metrics["corrupted"]["unable"] / tot_corr if tot_corr else 0
     qur_c1 = metrics["corrupted"]["c1_un"] / metrics["corrupted"]["c1_tot"] if metrics["corrupted"]["c1_tot"] else 0
     qur_c2 = metrics["corrupted"]["c2_un"] / metrics["corrupted"]["c2_tot"] if metrics["corrupted"]["c2_tot"] else 0
     qur_c3 = metrics["corrupted"]["c3_un"] / metrics["corrupted"]["c3_tot"] if metrics["corrupted"]["c3_tot"] else 0
 
-    # FUR: False Positive Rate (original questions classified as unable)
     tot_orig = metrics["original"]["total"]
     fur = metrics["original"]["unable"] / tot_orig if tot_orig else 0
     fur_c1 = metrics["original"]["c1_un"] / metrics["original"]["c1_tot"] if metrics["original"]["c1_tot"] else 0
     fur_c2 = metrics["original"]["c2_un"] / metrics["original"]["c2_tot"] if metrics["original"]["c2_tot"] else 0
     fur_c3 = metrics["original"]["c3_un"] / metrics["original"]["c3_tot"] if metrics["original"]["c3_tot"] else 0
 
-    # F1 Score
     true_positives = metrics["corrupted"]["unable"]
     false_positives = metrics["original"]["unable"]
     false_negatives = metrics["corrupted"]["total"] - true_positives
     
     precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) else 0
-    recall = qur # same as TPR
+    recall = qur
     f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) else 0
 
+    avg_steps = sum(all_steps) / len(all_steps) if all_steps else 0
+
     # --- Reporting ---
-    print("\n" + "="*50)
-    print(" AGENTIC PIPELINE EVALUATION RESULTS")
-    print("="*50)
+    print("\n" + "="*55)
+    print(" AGENTIC PIPELINE (ReAct) EVALUATION RESULTS")
+    print("="*55)
     
-    print("\n--- Pipeline Efficiency ---")
+    print("\n--- ReAct Agent Efficiency ---")
     print(f"Total questions processed : {len(questions)}")
-    print(f"Early Exits (Pass 1 only) : {pass1_exits} ({pass1_exits/len(questions)*100:.1f}%)")
-    print(f"Full Escalations (Pass 2) : {pass2_exits} ({pass2_exits/len(questions)*100:.1f}%)")
+    print(f"Average steps per question: {avg_steps:.2f}")
+    print(f"Forced exits (max iters)  : {forced_exits} ({forced_exits/len(questions)*100:.1f}%)")
+    
+    print("\n  Step distribution:")
+    for step_count in sorted(step_distribution.keys()):
+        count = step_distribution[step_count]
+        bar = "█" * int(count / len(questions) * 30)
+        print(f"    {step_count} steps: {count:>4} ({count/len(questions)*100:5.1f}%) {bar}")
+    
+    print("\n  Tool usage frequency:")
+    for tool, count in all_tools.most_common():
+        print(f"    {tool:<20}: {count:>4} ({count/len(questions)*100:5.1f}%)")
     
     print("\n--- QUR (Corrupted Detection Rate) ---")
     print(f"QUR Total : {qur*100:.1f}%  ({metrics['corrupted']['unable']}/{tot_corr})")
@@ -103,13 +133,15 @@ def evaluate_results(result_file):
 
     print("\n--- Overall Metrics ---")
     print(f"Precision : {precision:.3f}")
+    print(f"Recall    : {recall:.3f}")
     print(f"F1 Score  : {f1:.3f}")
 
     print("\n--- Confusion Matrix ---")
     print("                     | Agent: 'Unable' | Agent: 'Answer' |")
     print(f"  Actual: Corrupted  | TP: {true_positives:<11} | FN: {false_negatives:<13} |")
     print(f"  Actual: Original   | FP: {false_positives:<11} | TN: {tot_orig - false_positives:<13} |")
-    print("==================================================")
+    print("=" * 55)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

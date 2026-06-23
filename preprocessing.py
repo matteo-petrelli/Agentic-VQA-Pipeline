@@ -210,3 +210,49 @@ class PreprocessingEngine:
         response = requests.post(config.OLLAMA_URL, json=payload)
         response.raise_for_status()
         return response.json()["message"]["content"]
+
+    def call_vlm_chat(self, messages, image_path=None):
+        """
+        Multi-turn chat with the VLM for ReAct conversation history.
+        
+        Args:
+            messages: List of {"role": str, "content": str} dicts.
+            image_path: Optional image to attach to the first user message.
+            
+        Returns:
+            The VLM's response content string.
+        """
+        # Deep copy messages to avoid mutating the caller's list
+        payload_messages = []
+        image_attached = False
+        
+        for msg in messages:
+            msg_copy = {"role": msg["role"], "content": msg["content"]}
+            
+            # Attach image to the first user message only
+            if not image_attached and msg["role"] == "user" and image_path:
+                potential = (
+                    os.path.join(config.IMAGE_DIR, image_path)
+                    if not os.path.exists(image_path)
+                    else image_path
+                )
+                img, _ = resize_image_for_model(potential)
+                msg_copy["images"] = [image_to_base64(img)]
+                image_attached = True
+            
+            payload_messages.append(msg_copy)
+        
+        payload = {
+            "model": config.OLLAMA_VLM,
+            "messages": payload_messages,
+            "stream": False,
+            "options": {
+                "temperature": config.AGENT_TEMPERATURE,
+                "num_predict": 512,
+            },
+        }
+        
+        response = requests.post(config.OLLAMA_URL, json=payload)
+        response.raise_for_status()
+        return response.json()["message"]["content"]
+

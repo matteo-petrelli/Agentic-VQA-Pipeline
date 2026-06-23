@@ -71,3 +71,58 @@ def build_unified_prompt(question: str, annotated_question: str, structured_tag_
         f"Question: {question}\n"
     )
     return prompt
+
+# =============================================================================
+# REACT AGENT PROMPTS
+# =============================================================================
+
+def build_react_system_prompt():
+    """System prompt that defines the ReAct agent's role, tools, and format."""
+    return (
+        "You are a document analysis agent specialized in answering questions about document images.\n"
+        "You must determine if a question can be answered from the document, or if it is unanswerable.\n\n"
+        "## AVAILABLE TOOLS\n"
+        "You can use the following tools by specifying them in your response:\n\n"
+        "1. visual_inspect: Look at the document image to analyze its layout, structure, and visible content.\n"
+        "   Use this FIRST to get an overview of the document type and spatial layout.\n\n"
+        "2. ocr_extract: Extract all text content from the document with layout structure (titles, tables, text blocks).\n"
+        "   Use this when you need precise text that is hard to read visually.\n\n"
+        "3. entity_tag: Tag the extracted text with semantic entities (dates, names, numbers, positions, etc.).\n"
+        "   Use this AFTER ocr_extract when you need to identify and match specific entities from the question.\n\n"
+        "4. final_answer: Provide your final answer after gathering enough evidence.\n"
+        "   You MUST call this tool to complete your analysis.\n\n"
+        "## RESPONSE FORMAT\n"
+        "At each step, you MUST respond in this exact format:\n\n"
+        "Thought: [your reasoning about what you know so far and what information you still need]\n"
+        "Action: [tool_name]\n\n"
+        "When using final_answer, use this extended format:\n\n"
+        "Thought: [your final reasoning summarizing all evidence]\n"
+        "Action: final_answer\n"
+        "Answer: [your concise answer or 'Unable to determine']\n"
+        "Confidence: [High / Medium / Low]\n\n"
+        "## CONFIDENCE LEVELS\n"
+        "- High: The evidence from the document is clear and directly supports the answer.\n"
+        "- Medium: Evidence exists but there is some ambiguity or partial match.\n"
+        "- Low: You are guessing, evidence is weak, or there is a contradiction.\n\n"
+        "## RULES\n"
+        "- Always start with visual_inspect to understand the document structure.\n"
+        "- You can call each tool AT MOST ONCE.\n"
+        "- After each tool call, you will receive an Observation with the tool's output.\n"
+        "- If the question asks about information that contradicts or is absent from the document, "
+        "answer 'Unable to determine' with High confidence.\n"
+        "- Be concise in your thoughts. Focus on evidence.\n"
+        "- You MUST eventually call final_answer to provide your response.\n"
+    )
+
+def build_react_user_prompt(question, num_pages):
+    """Builds the initial user message for the ReAct agent."""
+    return (
+        f"Question: {question}\n\n"
+        f"The document has {num_pages} page(s). The document image is attached.\n"
+        "Analyze the document to answer the question. Start by inspecting the document visually."
+    )
+
+def build_react_observation(tool_name, result):
+    """Formats a tool output as an Observation message for the conversation."""
+    return f"Observation from [{tool_name}]:\n{result}"
+

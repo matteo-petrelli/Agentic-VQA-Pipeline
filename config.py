@@ -38,6 +38,15 @@ UNABLE_KEYWORDS = [
 # Extremely useful for testing the pipeline on a subset before committing to a 15h run.
 SAMPLING_PERCENTAGE = 0.1
 
+# =============================================================================
+# REACT AGENT CONFIGURATION
+# =============================================================================
+# Maximum number of tool calls before the agent is forced to answer.
+# Each iteration = 1 VLM call. Typical questions need 2-3 steps.
+MAX_ITERATIONS = 4
+# Temperature for the agent's reasoning (slightly above 0 for diversity)
+AGENT_TEMPERATURE = 0.1
+
 # Thresholds for GLiNER entity detection
 GLINER_THRESHOLDS = {
     "document_position_information": 0.75,
