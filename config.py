@@ -4,8 +4,8 @@ import os
 # MODELS CONFIGURATION
 # =============================================================================
 # The primary Vision-Language Model to use for both Pass 1 and Pass 2
-# Suggested options: "qwen2.5-vl:3b", "phi3.5", "gemma3:4b"
-OLLAMA_VLM = "qwen2.5-vl:3b"
+# Suggested options: "qwen2.5vl:3b", "phi3.5", "gemma3:4b"
+OLLAMA_VLM = "qwen2.5vl:3b"
 OLLAMA_URL = "http://localhost:11434/api/chat"
 
 # DOTS.OCR configuration
