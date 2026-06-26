@@ -58,21 +58,31 @@ def main():
         item = questions[i]
         q_text = item.get("corrupted_question", "")
         
-        # Extract images
-        vr = item.get("verification_result", {})
-        vqa_res = vr.get("vqa_results", [{}])[0]
-        images = vqa_res.get("image_paths", vqa_res.get("answer", []))
-        
+        # Extract image paths from the DUDE_fixed.json structure.
+        # Images are derived from `patch_entities` keys (page filenames)
+        # or `original_entity[].page_id` as fallback.
         image_paths = []
-        if isinstance(images, list):
-            for img in images:
-                if isinstance(img, dict) and "pages" in img:
-                    image_paths.extend(img["pages"])
-                elif isinstance(img, str):
-                    image_paths.append(img)
-                    
-        # Ensure unique paths
-        image_paths = list(set(image_paths))
+        
+        # Primary: patch_entities keys contain all page filenames
+        patch_entities = item.get("patch_entities", {})
+        if patch_entities:
+            for page_filename in patch_entities.keys():
+                full_path = os.path.join(config.IMAGE_DIR, page_filename)
+                image_paths.append(full_path)
+        
+        # Fallback: extract page_ids from original_entity or corrupted_entities
+        if not image_paths:
+            for ent_list_key in ["original_entity", "corrupted_entities"]:
+                for ent in item.get(ent_list_key, []):
+                    page_id = ent.get("page_id", "")
+                    if page_id:
+                        full_path = os.path.join(config.IMAGE_DIR, page_id)
+                        if full_path not in image_paths:
+                            image_paths.append(full_path)
+        
+        # Ensure unique paths and sort by page number for consistent ordering
+        image_paths = sorted(set(image_paths))
+        
         if not image_paths:
             print(f"  [Warning] No images found for question: {q_text[:50]}")
             continue
