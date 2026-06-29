@@ -19,7 +19,7 @@ GLINER_MODEL_PATH = "urchade/gliner_medium-v2.1"
 # =============================================================================
 # I/O PATHS (KAGGLE DEFAULTS)
 # =============================================================================
-INPUT_JSON_PATH = "/kaggle/input/datasets/matteopetrelli/dude-questions/DUDE_fixed.json"
+INPUT_JSON_PATH = "/kaggle/input/datasets/matteopetrelli/dude-mixed/DUDE_mixed_test.json"
 IMAGE_DIR = "/kaggle/input/datasets/matteopetrelli/dude-train/content/DUDE_train-val-test_binaries/images/train"
 OUTPUT_JSON_PATH = "/kaggle/working/agentic_pipeline_results.json"
 
