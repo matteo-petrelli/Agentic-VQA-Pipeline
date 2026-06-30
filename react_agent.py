@@ -191,13 +191,29 @@ class ReActAgent:
         # Forced exit: MAX_ITERATIONS reached without final_answer
         print(f"  ⚠ Forced exit after {config.MAX_ITERATIONS} steps")
         
-        # Try to extract an answer from the last response as fallback
-        last_response = trace[-1]["raw_response"] if trace else ""
-        fallback_answer, fallback_conf = parse_final_answer(last_response)
+        # Force one final VLM call asking to synthesize all evidence
+        summary_prompt = (
+            "You have reached the maximum number of analysis steps. "
+            "Based on ALL the evidence gathered so far from your tool observations, "
+            "you MUST now provide your final answer.\n\n"
+            "If the tools found relevant information, use it to answer. "
+            "Only say 'Unable to determine' if the tools found a clear contradiction.\n\n"
+            "Thought: [summarize the key evidence from your observations]\n"
+            "Action: final_answer\n"
+            "Answer: [your answer]\n"
+            "Confidence: [High / Medium / Low]"
+        )
+        conversation.append({"role": "user", "content": summary_prompt})
+        
+        try:
+            final_response = self.engine.call_vlm_chat(conversation, primary_image)
+            answer, confidence = parse_final_answer(final_response)
+        except Exception:
+            answer, confidence = "Unable to determine", 1
         
         return {
-            "final_answer": fallback_answer if fallback_answer != "Unable to determine" else "Unable to determine",
-            "final_confidence": fallback_conf,
+            "final_answer": answer,
+            "final_confidence": confidence,
             "steps": len(trace),
             "tools_used": list(tools_used),
             "trace": trace,

@@ -248,7 +248,7 @@ class PreprocessingEngine:
             "stream": False,
             "options": {
                 "temperature": config.AGENT_TEMPERATURE,
-                "num_predict": 512,
+                "num_predict": 768,
             },
         }
         

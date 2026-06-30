@@ -43,9 +43,9 @@ SAMPLING_PERCENTAGE = 0.1
 # =============================================================================
 # Maximum number of tool calls before the agent is forced to answer.
 # Each iteration = 1 VLM call. Typical questions need 2-3 steps.
-MAX_ITERATIONS = 4
+MAX_ITERATIONS = 5
 # Temperature for the agent's reasoning (slightly above 0 for diversity)
-AGENT_TEMPERATURE = 0.1
+AGENT_TEMPERATURE = 0.05
 
 # Thresholds for GLiNER entity detection
 GLINER_THRESHOLDS = {
