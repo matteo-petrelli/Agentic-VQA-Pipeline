@@ -17,6 +17,20 @@ def load_checkpoint(output_path):
                 return json.load(f)
             except json.JSONDecodeError:
                 return {"corrupted_questions": []}
+    # Fallback: se siamo su Kaggle e il checkpoint è stato caricato come Input Dataset
+    from pathlib import Path
+    filename = os.path.basename(output_path)
+    input_root = Path("/kaggle/input")
+    if input_root.exists():
+        matches = list(input_root.glob(f"**/{filename}"))
+        if matches:
+            try:
+                with open(matches[0], "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    print(f"Checkpoint precedente trovato in Kaggle Input: {matches[0]}")
+                    return data
+            except json.JSONDecodeError:
+                pass
     return {"corrupted_questions": []}
 
 def save_checkpoint(output_path, data):
