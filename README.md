@@ -1,146 +1,158 @@
-# Agentic VQA Pipeline
+# Unanswerability Diagnostic VQA Agent
 
-A **ReAct-style agentic pipeline** for **Question Unanswerable Recognition (QUR)** on document images, designed to detect corrupted/unanswerable questions in the [DUDE dataset](https://arxiv.org/abs/2305.08455).
+LangGraph pipeline for diagnosing whether a question is answerable from document images, identifying possible unanswerability causes, and answering only after diagnostic checks pass.
 
-The agent autonomously decides which tools to use (visual inspection, OCR, entity tagging) through a **Thought → Action → Observation** reasoning loop, following the ReAct framework (Yao et al., 2023).
+The agent produces three distinct states:
+
+- `answerable`: direct and contextually valid evidence supports an answer;
+- `unanswerable`: a question constraint or presupposition conflicts with the document;
+- `insufficient_evidence`: extraction quality or document coverage is not sufficient to decide.
+
+This distinction prevents OCR failures and missing pages from being counted automatically as corrupted questions.
 
 ## Architecture
 
-The agent processes each question through a dynamic reasoning loop:
-
-```
-Question + Document Image
-         │
-         ▼
-┌─────────────────────────────────────────────┐
-│              ReAct AGENT LOOP               │
-│                                             │
-│  ┌─────────┐                                │
-│  │ THINK   │ "What do I know? What do I     │
-│  │         │  need to answer this question?" │
-│  └────┬────┘                                │
-│       │                                     │
-│       ▼                                     │
-│  ┌─────────┐    ┌─────────────────────┐     │
-│  │  ACT    │───▶│ Choose a tool:      │     │
-│  │         │    │  • visual_inspect   │     │
-│  └────┬────┘    │  • ocr_extract     │     │
-│       │         │  • entity_tag      │     │
-│       │         │  • final_answer    │     │
-│       │         └─────────────────────┘     │
-│       ▼                                     │
-│  ┌─────────┐                                │
-│  │ OBSERVE │ Receive tool output,           │
-│  │         │ loop back to THINK             │
-│  └─────────┘                                │
-│                                             │
-│  Repeat until final_answer (max 4 steps)    │
-└─────────────────────────────────────────────┘
+```text
+question + document pages
+    -> question decomposition
+    -> OCR, document elements, entity tags, quadrants
+    -> candidate cause generation
+    -> model-specific prompt selection
+    -> diagnostic test loop
+    -> coverage and answerability decision
+    -> answerer, only when answerable
+    -> structured diagnosis
 ```
 
-### Available Tools
+The diagnostic causes include entity, value, temporal, relation, answer-type, document-element and spatial mismatches, unsupported presuppositions, ambiguous targets, missing evidence and extraction failures.
 
-| Tool | What it does | When the agent uses it |
-|------|-------------|----------------------|
-| `visual_inspect` | Spatial/layout analysis of the document image | First step — get document overview |
-| `ocr_extract` | DOTS.OCR structured text extraction | When precise text reading is needed |
-| `entity_tag` | GLiNER semantic entity tagging | After OCR, to match question entities |
-| `final_answer` | Terminates loop with answer + confidence | When evidence is sufficient |
+## Prompt Catalog
 
-### Key Properties
-- **Autonomous**: The VLM decides which tools to call based on the question and document
-- **Iterative**: Up to 4 reasoning steps (configurable via `MAX_ITERATIONS`)
-- **Efficient**: Simple questions may need only 2 steps; complex ones use all tools
-- **Traceable**: Full Thought/Action/Observation trace is logged for analysis
+The previous prompt experiments are available as named strategies under `diagnostic_agent/prompts/`:
 
-## Models Used
+- `baseline`, `baseline_ocr`;
+- `docel`, `docel_cot_v1` through `docel_cot_v4`, `docel_cot_numvre`;
+- `nlp_tag`, `nlp_tag_cot`;
+- `nlp_list`, `nlp_list_cot`, `nlp_list_ocr`, `nlp_list_ocr_cot`;
+- `layout_v1` through `layout_v4`.
 
-| Component | Model | Purpose |
-|-----------|-------|---------|
-| VLM + Agent | Configurable via Ollama (e.g., `qwen2.5-vl:3b`, `phi3.5`, `gemma3:4b`) | Reasoning agent + Visual Q&A |
-| OCR | [DOTS.OCR](https://huggingface.co/strangervisionhf/dots.ocr-base-fix) | Layout detection + text extraction |
-| NER | [GLiNER medium-v2.1](https://huggingface.co/urchade/gliner_medium-v2.1) | Entity recognition & tagging |
+Each prompt declares its required evidence, supported causes and whether document images must be attached. Historical strategy instructions are wrapped in a common JSON diagnostic contract so outputs remain comparable.
+
+No profile is asserted to be optimal. Prompt choices are initial configurations intended to be replaced after model-level analysis.
+
+## Model-Specific Selection
+
+Choose a default profile in `config.py`:
+
+```python
+PROMPT_PROFILE = "default"
+```
+
+Available candidate profiles are `default`, `entity_focused`, `document_focused` and `layout_focused`.
+
+Map models to profiles:
+
+```python
+MODEL_PROMPT_PROFILES = {
+    "qwen2.5vl": "entity_focused",
+    "gemma3": "document_focused",
+    "phi3.5": "layout_focused",
+}
+```
+
+Override individual causes or control prompts for one model:
+
+```python
+MODEL_PROMPT_OVERRIDES = {
+    "qwen2.5vl": {
+        "answerer_prompt": "docel_cot_v4",
+        "verifier_prompt": "answerability_verifier_v1",
+        "cause_prompts": {
+            "VALUE_MISMATCH": "nlp_tag_cot",
+            "SPATIAL_MISMATCH": "layout_v4",
+        },
+    },
+}
+```
+
+The same overrides can be supplied at runtime as a JSON file:
+
+```bash
+python run_experiments.py \
+    --model qwen2.5vl:3b \
+  --prompt-profile default \
+  --prompt-overrides prompt_overrides.json
+```
+
+An incompatible prompt/cause combination fails during agent initialization and lists compatible candidates.
 
 ## Project Structure
 
-```
-├── config.py              # All hyperparameters, model paths, ReAct settings
-├── react_agent.py         # Core ReAct loop with tool registry (NEW)
-├── preprocessing.py       # DOTS.OCR, GLiNER, and Ollama VLM engine
-├── agentic_pipeline.py    # Thin wrapper delegating to ReActAgent
-├── prompt_library.py      # ReAct system prompt + tool prompts
-├── run_experiments.py     # Main entry point with checkpoint/resume
-├── evaluate_results.py    # QUR, FUR, F1 + ReAct metrics (steps, tool usage)
-└── requirements.txt       # Python dependencies
-```
-
-## Setup (Kaggle)
-
-### Prerequisites
-1. **GPU enabled**: Settings → Accelerator → GPU T4 x2 or P100
-2. **Add 3 datasets as Input**:
-   - Your repo upload (e.g., `agentic-pipeline`)
-   - `dude-train` — document images
-   - `dude-questions` — JSON with corrupted/original questions
-
-### Cell 1 — Install & Start Ollama + Pull Model
-```python
-import subprocess, time
-
-!curl -fsSL https://ollama.com/install.sh | sh
-subprocess.Popen(["ollama", "serve"])
-time.sleep(5)
-
-MODEL = "qwen2.5-vl:3b"  # Change per test: "phi3.5", "gemma3:4b"
-!ollama pull {MODEL}
+```text
+diagnostic_agent/
+    agent.py              public agent API
+    engine.py             Ollama, DOTS.OCR and GLiNER integration
+    evidence.py           multi-page evidence extraction and coverage
+    graph.py              LangGraph assembly and routes
+    nodes.py              diagnostic nodes and decision policy
+    parsing.py            structured VLM output normalization
+    profiles.py           selectable prompt profiles and overrides
+    schemas.py            state, causes and prompt contracts
+    prompts/              all specialized prompt families
+tests/
+    test_diagnostic_agent.py
+agentic_pipeline.py       stable pipeline facade
+config.py                 models, paths, profiles and thresholds
+run_experiments.py        dataset runner with checkpointing
+evaluate_results.py       QUR, FUR, causes, coverage and prompt metrics
+proposta_agente_prompt_routing.md
 ```
 
-### Cell 2 — Install Dependencies
-```python
-!pip install -q gliner paddleocr bitsandbytes nltk
+## Setup
+
+The production engine requires a CUDA environment for DOTS.OCR and GLiNER, plus a running Ollama server with the selected vision model.
+
+```bash
+python -m pip install -r requirements.txt
+ollama serve
+ollama pull qwen2.5vl:3b
 ```
 
-### Cell 3 — Configure & Override
-```python
-import sys
-sys.path.insert(0, "/kaggle/input/agentic-pipeline")
+Update dataset paths and model settings in `config.py`, then run:
 
-import config
-config.OLLAMA_VLM = MODEL
-config.SAMPLING_PERCENTAGE = 0.1  # 10% for quick test, 1.0 for full run
+```bash
+python run_experiments.py --model qwen2.5vl:3b --prompt-profile default
+python evaluate_results.py --file /path/to/unanswerability_diagnostic_results.json
 ```
 
-### Cell 4 — Run Pipeline
-```python
-from run_experiments import main
-main()
+## Output
+
+Each `agentic_result` contains:
+
+```json
+{
+  "answerability": "unanswerable",
+  "primary_cause": "VALUE_MISMATCH",
+  "secondary_causes": [],
+  "diagnostic_results": [],
+  "evidence_coverage": 1.0,
+  "final_answer": "Unable to determine",
+  "answerability_confidence": 3,
+  "cause_confidence": 3,
+  "answer_confidence": null,
+    "prompt_profile": "default@qwen2.5vl:3b",
+  "prompts_used": ["question_analysis_v1", "nlp_tag_cot"],
+  "tests_run": 1,
+  "trace": []
+}
 ```
 
-### Cell 5 — Evaluate Results
-```python
-from evaluate_results import evaluate_results
-evaluate_results(config.OUTPUT_JSON_PATH)
+QUR and FUR use only the explicit `unanswerable` state. `insufficient_evidence` is reported separately.
+
+## Tests
+
+The graph can be tested without GPU, Ollama or model downloads:
+
+```bash
+python -m unittest discover -s tests -v
 ```
-
-## Evaluation Metrics
-
-### Core Metrics
-| Metric | Description |
-|--------|-------------|
-| **QUR** | Question Unanswerable Recognition rate (corrupted → "Unable") |
-| **FUR** | False Unable Rate (original → incorrectly "Unable") |
-| **F1** | Harmonic mean of Precision and Recall |
-
-### ReAct Agent Metrics
-| Metric | Description |
-|--------|-------------|
-| **Avg Steps** | Average number of reasoning steps per question |
-| **Tool Usage** | Frequency of each tool being called |
-| **Forced Exits** | Questions where MAX_ITERATIONS was reached |
-| **Step Distribution** | Histogram of steps per question |
-
-Results are broken down by corruption complexity (C1, C2, C3).
-
-## License
-
-MIT

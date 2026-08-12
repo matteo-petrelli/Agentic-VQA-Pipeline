@@ -1,146 +1,134 @@
-"""
-Evaluation script for the Agentic VQA Pipeline.
-
-Computes QUR, FUR, F1, confusion matrix, and ReAct-specific metrics
-(average steps, tool usage frequency, forced exits).
-"""
-import json
 import argparse
+import json
 from collections import Counter
 
 
-def is_unable(answer: str) -> bool:
-    """Check if an answer indicates the question is unanswerable."""
-    ans_lower = str(answer).strip().lower()
-    for kw in ["unable to determine", "unable", "cannot determine", "unanswerable"]:
-        if kw in ans_lower:
-            return True
-    return False
+VALID_STATES = {"answerable", "unanswerable", "insufficient_evidence"}
 
 
 def evaluate_results(result_file):
-    """Evaluate pipeline results and print metrics."""
-    with open(result_file, "r", encoding="utf-8") as f:
+    """Evaluate structured answerability decisions and diagnostic behavior."""
+    with open(result_file, "r", encoding="utf-8-sig") as f:
         data = json.load(f)
-        
+
     questions = data.get("corrupted_questions", [])
     if not questions:
         print("No questions found in the result file.")
         return
 
-    # Core Metrics
     metrics = {
-        "corrupted": {"total": 0, "unable": 0, "c1_tot": 0, "c1_un": 0, "c2_tot": 0, "c2_un": 0, "c3_tot": 0, "c3_un": 0},
-        "original":  {"total": 0, "unable": 0, "c1_tot": 0, "c1_un": 0, "c2_tot": 0, "c2_un": 0, "c3_tot": 0, "c3_un": 0}
+        group: {
+            "total": 0,
+            "unanswerable": 0,
+            "insufficient": 0,
+            "complexity_total": Counter(),
+            "complexity_unanswerable": Counter(),
+        }
+        for group in ("corrupted", "original")
     }
-    
-    # ReAct-specific metrics
-    all_steps = []
-    all_tools = Counter()
-    forced_exits = 0
-    step_distribution = Counter()
+
+    state_counts = Counter()
+    cause_counts = Counter()
+    prompt_counts = Counter()
+    profile_counts = Counter()
+    answerability_confidence = Counter()
+    cause_confidence = Counter()
+    test_counts = []
+    coverages = []
+    malformed_results = 0
 
     for q in questions:
         agent_res = q.get("agentic_result", {})
-        final_ans = agent_res.get("final_answer", "Error")
-        is_un = is_unable(final_ans)
-        
-        # ReAct metrics
-        steps = agent_res.get("steps", 0)
-        all_steps.append(steps)
-        step_distribution[steps] += 1
-        
-        tools = agent_res.get("tools_used", [])
-        for tool in tools:
-            all_tools[tool] += 1
-        
-        if agent_res.get("forced_exit", False):
-            forced_exits += 1
-        
-        # Core classification metrics
+        state = agent_res.get("answerability", "insufficient_evidence")
+        if state not in VALID_STATES:
+            malformed_results += 1
+            state = "insufficient_evidence"
+
         is_corr = q.get("is_corrupted", True)
         comp = q.get("complexity", 1)
         group = "corrupted" if is_corr else "original"
-        
+
         metrics[group]["total"] += 1
-        if is_un:
-            metrics[group]["unable"] += 1
-            
-        if comp == 1:
-            metrics[group]["c1_tot"] += 1
-            if is_un: metrics[group]["c1_un"] += 1
-        elif comp == 2:
-            metrics[group]["c2_tot"] += 1
-            if is_un: metrics[group]["c2_un"] += 1
-        elif comp == 3:
-            metrics[group]["c3_tot"] += 1
-            if is_un: metrics[group]["c3_un"] += 1
+        metrics[group]["complexity_total"][comp] += 1
+        if state == "unanswerable":
+            metrics[group]["unanswerable"] += 1
+            metrics[group]["complexity_unanswerable"][comp] += 1
+        elif state == "insufficient_evidence":
+            metrics[group]["insufficient"] += 1
 
-    # --- Calculations ---
+        state_counts[state] += 1
+        cause_counts[agent_res.get("primary_cause") or "NONE"] += 1
+        for prompt in agent_res.get("prompts_used", []):
+            prompt_counts[prompt] += 1
+        profile_counts[agent_res.get("prompt_profile", "unknown")] += 1
+        answerability_confidence[agent_res.get("answerability_confidence", 1)] += 1
+        cause_confidence[agent_res.get("cause_confidence", 1)] += 1
+        test_counts.append(agent_res.get("tests_run", 0))
+        coverages.append(float(agent_res.get("evidence_coverage", 0.0)))
+
+    total = len(questions)
     tot_corr = metrics["corrupted"]["total"]
-    qur = metrics["corrupted"]["unable"] / tot_corr if tot_corr else 0
-    qur_c1 = metrics["corrupted"]["c1_un"] / metrics["corrupted"]["c1_tot"] if metrics["corrupted"]["c1_tot"] else 0
-    qur_c2 = metrics["corrupted"]["c2_un"] / metrics["corrupted"]["c2_tot"] if metrics["corrupted"]["c2_tot"] else 0
-    qur_c3 = metrics["corrupted"]["c3_un"] / metrics["corrupted"]["c3_tot"] if metrics["corrupted"]["c3_tot"] else 0
-
     tot_orig = metrics["original"]["total"]
-    fur = metrics["original"]["unable"] / tot_orig if tot_orig else 0
-    fur_c1 = metrics["original"]["c1_un"] / metrics["original"]["c1_tot"] if metrics["original"]["c1_tot"] else 0
-    fur_c2 = metrics["original"]["c2_un"] / metrics["original"]["c2_tot"] if metrics["original"]["c2_tot"] else 0
-    fur_c3 = metrics["original"]["c3_un"] / metrics["original"]["c3_tot"] if metrics["original"]["c3_tot"] else 0
-
-    true_positives = metrics["corrupted"]["unable"]
-    false_positives = metrics["original"]["unable"]
+    true_positives = metrics["corrupted"]["unanswerable"]
+    false_positives = metrics["original"]["unanswerable"]
     false_negatives = metrics["corrupted"]["total"] - true_positives
-    
+    true_negatives = metrics["original"]["total"] - false_positives
+
+    qur = true_positives / tot_corr if tot_corr else 0.0
+    fur = false_positives / tot_orig if tot_orig else 0.0
     precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) else 0
-    recall = qur
-    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) else 0
+    f1 = 2 * precision * qur / (precision + qur) if (precision + qur) else 0.0
 
-    avg_steps = sum(all_steps) / len(all_steps) if all_steps else 0
+    print("\n" + "=" * 64)
+    print(" UNANSWERABILITY DIAGNOSTIC AGENT RESULTS")
+    print("=" * 64)
+    print(f"Questions: {total} | malformed states: {malformed_results}")
 
-    # --- Reporting ---
-    print("\n" + "="*55)
-    print(" AGENTIC PIPELINE (ReAct) EVALUATION RESULTS")
-    print("="*55)
-    
-    print("\n--- ReAct Agent Efficiency ---")
-    print(f"Total questions processed : {len(questions)}")
-    print(f"Average steps per question: {avg_steps:.2f}")
-    print(f"Forced exits (max iters)  : {forced_exits} ({forced_exits/len(questions)*100:.1f}%)")
-    
-    print("\n  Step distribution:")
-    for step_count in sorted(step_distribution.keys()):
-        count = step_distribution[step_count]
-        bar = "█" * int(count / len(questions) * 30)
-        print(f"    {step_count} steps: {count:>4} ({count/len(questions)*100:5.1f}%) {bar}")
-    
-    print("\n  Tool usage frequency:")
-    for tool, count in all_tools.most_common():
-        print(f"    {tool:<20}: {count:>4} ({count/len(questions)*100:5.1f}%)")
-    
-    print("\n--- QUR (Corrupted Detection Rate) ---")
-    print(f"QUR Total : {qur*100:.1f}%  ({metrics['corrupted']['unable']}/{tot_corr})")
-    print(f"  QUR C1  : {qur_c1*100:.1f}%")
-    print(f"  QUR C2  : {qur_c2*100:.1f}%")
-    print(f"  QUR C3  : {qur_c3*100:.1f}%")
+    print("\n--- Answerability States ---")
+    for state in ("answerable", "unanswerable", "insufficient_evidence"):
+        count = state_counts[state]
+        print(f"{state:<24}: {count:>5} ({count / total * 100:5.1f}%)")
 
-    print("\n--- FUR (False Unable Rate) ---")
-    print(f"FUR Total : {fur*100:.1f}%  ({metrics['original']['unable']}/{tot_orig})")
-    print(f"  FUR C1  : {fur_c1*100:.1f}%")
-    print(f"  FUR C2  : {fur_c2*100:.1f}%")
-    print(f"  FUR C3  : {fur_c3*100:.1f}%")
+    print("\n--- Core Detection Metrics ---")
+    print(f"QUR / Recall: {qur:.3f} ({true_positives}/{tot_corr})")
+    print(f"FUR         : {fur:.3f} ({false_positives}/{tot_orig})")
+    print(f"Precision   : {precision:.3f}")
+    print(f"F1          : {f1:.3f}")
+    for complexity in (1, 2, 3):
+        denominator = metrics["corrupted"]["complexity_total"][complexity]
+        numerator = metrics["corrupted"]["complexity_unanswerable"][complexity]
+        score = numerator / denominator if denominator else 0.0
+        print(f"QUR C{complexity}      : {score:.3f} ({numerator}/{denominator})")
 
-    print("\n--- Overall Metrics ---")
-    print(f"Precision : {precision:.3f}")
-    print(f"Recall    : {recall:.3f}")
-    print(f"F1 Score  : {f1:.3f}")
+    print("\n--- Insufficient Evidence ---")
+    for group in ("corrupted", "original"):
+        count = metrics[group]["insufficient"]
+        denominator = metrics[group]["total"]
+        rate = count / denominator if denominator else 0.0
+        print(f"{group:<10}: {count:>5} ({rate * 100:5.1f}%)")
 
-    print("\n--- Confusion Matrix ---")
-    print("                     | Agent: 'Unable' | Agent: 'Answer' |")
-    print(f"  Actual: Corrupted  | TP: {true_positives:<11} | FN: {false_negatives:<13} |")
-    print(f"  Actual: Original   | FP: {false_positives:<11} | TN: {tot_orig - false_positives:<13} |")
-    print("=" * 55)
+    print("\n--- Diagnostic Efficiency ---")
+    print(f"Average tests   : {sum(test_counts) / total:.2f}")
+    print(f"Average coverage: {sum(coverages) / total:.3f}")
+    print("Prompt profiles : " + ", ".join(f"{key}={value}" for key, value in profile_counts.most_common()))
+
+    print("\n--- Primary Causes ---")
+    for cause, count in cause_counts.most_common():
+        print(f"{cause:<30}: {count:>5} ({count / total * 100:5.1f}%)")
+
+    print("\n--- Prompt Usage ---")
+    for prompt, count in prompt_counts.most_common():
+        print(f"{prompt:<30}: {count:>5} ({count / total * 100:5.1f}%)")
+
+    print("\n--- Confidence Distributions ---")
+    print("Answerability: " + ", ".join(f"{key}={value}" for key, value in sorted(answerability_confidence.items())))
+    print("Cause       : " + ", ".join(f"{key}={value}" for key, value in sorted(cause_confidence.items())))
+
+    print("\n--- Binary Confusion Matrix ---")
+    print("                     | Pred. Unanswerable | Pred. Other |")
+    print(f"Actual Corrupted     | TP: {true_positives:<14} | FN: {false_negatives:<10} |")
+    print(f"Actual Original      | FP: {false_positives:<14} | TN: {true_negatives:<10} |")
+    print("=" * 64)
 
 
 if __name__ == "__main__":

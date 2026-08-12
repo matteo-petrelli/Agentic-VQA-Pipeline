@@ -1,10 +1,14 @@
+import argparse
 import json
 import os
-import config
-from preprocessing import PreprocessingEngine
-from agentic_pipeline import AgenticPipeline
 import traceback
+
 from tqdm import tqdm
+
+import config
+from agentic_pipeline import AgenticPipeline
+from diagnostic_agent.engine import DocumentEngine
+
 
 def load_checkpoint(output_path):
     if os.path.exists(output_path):
@@ -19,8 +23,35 @@ def save_checkpoint(output_path, data):
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
-def main():
-    print("=== Agentic VQA Pipeline ===")
+def _load_prompt_overrides(path):
+    if not path:
+        return None
+    with open(path, "r", encoding="utf-8") as file:
+        value = json.load(file)
+    if not isinstance(value, dict):
+        raise ValueError("Prompt overrides must be a JSON object.")
+    return value
+
+
+def _image_paths(item):
+    paths = []
+    for page_filename in item.get("patch_entities", {}):
+        paths.append(os.path.join(config.IMAGE_DIR, os.path.basename(page_filename)))
+
+    if not paths:
+        for entity_list_key in ("original_entity", "corrupted_entities"):
+            for entity in item.get(entity_list_key, []):
+                page_id = entity.get("page_id")
+                if page_id:
+                    paths.append(os.path.join(config.IMAGE_DIR, os.path.basename(page_id)))
+    return sorted(set(paths))
+
+
+def main(model_name=None, profile_name=None, prompt_overrides=None, engine=None):
+    selected_model = model_name or config.OLLAMA_VLM
+    print("=== Unanswerability Diagnostic VQA Pipeline ===")
+    print(f"Model: {selected_model}")
+    print(f"Prompt profile: {profile_name or config.PROMPT_PROFILE}")
     
     # 1. Load Input Data
     if not os.path.exists(config.INPUT_JSON_PATH):
@@ -50,38 +81,21 @@ def main():
         return
         
     # 4. Initialize Engine
-    engine = PreprocessingEngine()
-    pipeline = AgenticPipeline(engine)
+    config.OLLAMA_VLM = selected_model
+    engine = engine or DocumentEngine()
+    pipeline = AgenticPipeline(
+        engine,
+        model_name=selected_model,
+        profile_name=profile_name,
+        prompt_overrides=prompt_overrides,
+    )
     
     # 5. Process Loop
     for i in tqdm(range(processed_count, len(questions)), desc="Processing"):
         item = questions[i]
         q_text = item.get("corrupted_question", "")
         
-        # Extract image paths from the DUDE_fixed.json structure.
-        # Images are derived from `patch_entities` keys (page filenames)
-        # or `original_entity[].page_id` as fallback.
-        image_paths = []
-        
-        # Primary: patch_entities keys contain all page filenames
-        patch_entities = item.get("patch_entities", {})
-        if patch_entities:
-            for page_filename in patch_entities.keys():
-                full_path = os.path.join(config.IMAGE_DIR, page_filename)
-                image_paths.append(full_path)
-        
-        # Fallback: extract page_ids from original_entity or corrupted_entities
-        if not image_paths:
-            for ent_list_key in ["original_entity", "corrupted_entities"]:
-                for ent in item.get(ent_list_key, []):
-                    page_id = ent.get("page_id", "")
-                    if page_id:
-                        full_path = os.path.join(config.IMAGE_DIR, page_id)
-                        if full_path not in image_paths:
-                            image_paths.append(full_path)
-        
-        # Ensure unique paths and sort by page number for consistent ordering
-        image_paths = sorted(set(image_paths))
+        image_paths = _image_paths(item)
         
         if not image_paths:
             print(f"  [Warning] No images found for question: {q_text[:50]}")
@@ -98,8 +112,18 @@ def main():
             print(f"  [Error] Processing failed: {e}")
             traceback.print_exc()
             item["agentic_result"] = {
+                "answerability": "insufficient_evidence",
+                "primary_cause": "EXTRACTION_FAILURE",
                 "final_answer": f"Error: {e}",
-                "pass_reached": 0
+                "answerability_confidence": 1,
+                "cause_confidence": 2,
+                "answer_confidence": None,
+                "evidence_coverage": 0.0,
+                "diagnostic_results": [],
+                "prompts_used": [],
+                "tests_run": 0,
+                "steps": 0,
+                "trace": [],
             }
             
         # Save Checkpoint
@@ -110,4 +134,21 @@ def main():
     print(f"Results saved to {config.OUTPUT_JSON_PATH}")
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Run the diagnostic VQA agent.")
+    parser.add_argument("--model", default=None, help="Ollama model name override")
+    parser.add_argument(
+        "--prompt-profile",
+        default=None,
+        help="Prompt profile (default, entity_focused, document_focused, layout_focused)",
+    )
+    parser.add_argument(
+        "--prompt-overrides",
+        default=None,
+        help="JSON file overriding analyzer, verifier, answerer, or per-cause prompts",
+    )
+    arguments = parser.parse_args()
+    main(
+        model_name=arguments.model,
+        profile_name=arguments.prompt_profile,
+        prompt_overrides=_load_prompt_overrides(arguments.prompt_overrides),
+    )
