@@ -67,6 +67,8 @@ def setup_environment(project_dir: Path) -> None:
     )
 
     if shutil.which("ollama") is None:
+        subprocess.run(["apt-get", "update", "-qq"], check=False)
+        subprocess.run(["apt-get", "install", "-y", "-qq", "zstd", "procps"], check=False)
         subprocess.run(
             ["bash", "-lc", "curl -fsSL https://ollama.com/install.sh | sh"],
             check=True,
