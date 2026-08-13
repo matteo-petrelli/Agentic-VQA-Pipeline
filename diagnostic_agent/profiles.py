@@ -72,12 +72,31 @@ PROMPT_PROFILES: dict[str, PromptProfile] = {
         verifier_prompt="answerability_verifier_v1",
         metadata={"status": "candidate profile; requires evaluation"},
     ),
+    "gemma4_focused": PromptProfile(
+        name="gemma4_focused",
+        cause_prompts={
+            **DEFAULT_CAUSE_PROMPTS,
+            CauseCode.ENTITY_MISSING: "nlp_list_ocr_cot",
+            CauseCode.ENTITY_MISMATCH: "nlp_list_ocr_cot",
+            CauseCode.SPATIAL_MISMATCH: "layout_v4",
+            CauseCode.DOCUMENT_ELEMENT_MISMATCH: "layout_v4",
+            CauseCode.VALUE_MISMATCH: "nlp_tag_cot",
+            CauseCode.TEMPORAL_MISMATCH: "nlp_tag_cot",
+            CauseCode.AMBIGUOUS_TARGET: "nlp_list_ocr_cot",
+        },
+        answerer_prompt="nlp_tag_cot",
+        verifier_prompt="answerability_verifier_v1",
+        metadata={"status": "gemma4:e4b optimized profile based on metrics_summary_1.csv"},
+    ),
 }
 
 
 # Assign a profile name to a model after model-level prompt analysis. Exact model
 # names and lowercase substrings are both accepted. Empty means use PROMPT_PROFILE.
-MODEL_PROFILE_MAP: dict[str, str] = {}
+MODEL_PROFILE_MAP: dict[str, str] = {
+    "gemma4": "gemma4_focused",
+    "gemma-4": "gemma4_focused",
+}
 
 
 def _validate_profile(profile: PromptProfile) -> None:
