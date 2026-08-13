@@ -176,7 +176,7 @@ def start_ollama(
         "OLLAMA_HOST": "127.0.0.1:11434",
         "OLLAMA_KEEP_ALIVE": "-1",
         "OLLAMA_FLASH_ATTENTION": "1",
-        "OLLAMA_MODELS": str(working / "ollama_models"),
+        "OLLAMA_MODELS": "/tmp/ollama_models",
     })
     _ollama_log_handle = open(working / "ollama.log", "w", encoding="utf-8")
     _ollama_process = subprocess.Popen(
