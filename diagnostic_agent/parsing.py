@@ -107,6 +107,7 @@ def normalize_diagnostic_result(
             if isinstance(data.get("evidence_against"), list)
             else []
         ),
+        "explanation": str(data.get("explanation") or ""),
         "coverage": max(0.0, min(1.0, float(coverage))),
         "confidence": int(confidence_value(data.get("confidence"))),
         "prompt_name": prompt_name,

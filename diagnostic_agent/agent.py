@@ -49,6 +49,7 @@ class UnanswerabilityDiagnosticAgent:
         return {
             "answerability": final_state["answerability"],
             "primary_cause": final_state.get("primary_cause"),
+            "cause_explanation": final_state.get("cause_explanation"),
             "secondary_causes": final_state.get("secondary_causes", []),
             "diagnostic_results": final_state.get("diagnostic_results", []),
             "evidence_coverage": final_state.get("evidence_coverage", 0.0),

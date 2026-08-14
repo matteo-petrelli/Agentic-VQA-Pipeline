@@ -62,6 +62,7 @@ class DiagnosticResult(TypedDict, total=False):
     observed: list[Any]
     evidence_for: list[EvidenceBlock]
     evidence_against: list[EvidenceBlock]
+    explanation: str
     coverage: float
     confidence: int
     prompt_name: str
@@ -93,6 +94,7 @@ class AgentState(TypedDict, total=False):
     next_action: str
     answerability: str | None
     primary_cause: str | None
+    cause_explanation: str | None
     secondary_causes: list[str]
     answer_result: dict[str, Any]
     final_answer: str | None

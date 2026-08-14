@@ -375,6 +375,7 @@ def _unanswerable_update(
     return {
         "answerability": Answerability.UNANSWERABLE.value,
         "primary_cause": result["cause"],
+        "cause_explanation": result.get("explanation") or None,
         "final_answer": "Unable to determine",
         "answerability_confidence": result.get("confidence", int(Confidence.MEDIUM)),
         "cause_confidence": result.get("confidence", int(Confidence.MEDIUM)),
@@ -397,6 +398,7 @@ def _insufficient_update(state: AgentState, reason: str) -> dict[str, Any]:
     return {
         "answerability": Answerability.INSUFFICIENT_EVIDENCE.value,
         "primary_cause": primary,
+        "cause_explanation": reason,
         "final_answer": "Unable to determine",
         "answerability_confidence": int(Confidence.LOW),
         "cause_confidence": int(Confidence.MEDIUM),

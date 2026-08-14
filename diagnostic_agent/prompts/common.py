@@ -70,6 +70,7 @@ Return one JSON object and no other text:
     {{"page": 1, "document_element": "Table", "quadrant": "Q3", "snippet": "exact evidence"}}
   ],
   "evidence_against": [],
+  "explanation": "1-2 sentence plain-language explanation of why this cause was confirmed, rejected, or left undetermined, referencing the specific evidence found",
   "confidence": "high | medium | low",
   "next_test": null
 }}
