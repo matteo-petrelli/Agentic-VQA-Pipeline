@@ -88,6 +88,31 @@ PROMPT_PROFILES: dict[str, PromptProfile] = {
         verifier_prompt="answerability_verifier_v1",
         metadata={"status": "gemma4:e4b optimized profile based on metrics_summary_1.csv"},
     ),
+    "qwen3vl_focused": PromptProfile(
+        name="qwen3vl_focused",
+        cause_prompts={
+            # Layout v4 dominates: QUR=0.8824, UR=0.9714, best overall for spatial causes
+            CauseCode.SPATIAL_MISMATCH: "layout_v4",
+            CauseCode.DOCUMENT_ELEMENT_MISMATCH: "layout_v4",
+            CauseCode.EVIDENCE_MISSING: "layout_v4",
+            # DocEl CoT v3: QUR=0.7112, UR=0.9269, strong on document structure
+            CauseCode.RELATION_MISMATCH: "docel_cot_v3",
+            CauseCode.ANSWER_TYPE_MISMATCH: "docel_cot_v3",
+            CauseCode.UNSUPPORTED_PRESUPPOSITION: "docel_cot_v3",
+            # NLP List OCR: QUR=0.6310, UR=0.8994, best for entity/value causes
+            # (NLP Tag avoided: QUR=0.4064, Error Rate=6.42%)
+            CauseCode.ENTITY_MISSING: "nlp_list_ocr",
+            CauseCode.ENTITY_MISMATCH: "nlp_list_ocr",
+            CauseCode.VALUE_MISMATCH: "nlp_list_ocr",
+            CauseCode.TEMPORAL_MISMATCH: "nlp_list_ocr",
+            CauseCode.AMBIGUOUS_TARGET: "nlp_list_ocr_cot",
+            CauseCode.EXTRACTION_FAILURE: "answerability_verifier_v1",
+        },
+        # Layout v4 as answerer: best QUR/UR overall for Qwen3-VL 8B
+        answerer_prompt="layout_v4",
+        verifier_prompt="answerability_verifier_v1",
+        metadata={"status": "qwen3-vl:8b optimized profile based on metrics_summary_1.csv"},
+    ),
 }
 
 
@@ -96,6 +121,8 @@ PROMPT_PROFILES: dict[str, PromptProfile] = {
 MODEL_PROFILE_MAP: dict[str, str] = {
     "gemma4": "gemma4_focused",
     "gemma-4": "gemma4_focused",
+    "qwen3-vl": "qwen3vl_focused",
+    "qwen3vl": "qwen3vl_focused",
 }
 
 
