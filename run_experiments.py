@@ -153,7 +153,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--prompt-profile",
         default=None,
-        help="Prompt profile (default, entity_focused, document_focused, layout_focused)",
+        help="Prompt profile (default, gemma3_focused, gemma4_focused, qwen3vl_focused)",
     )
     parser.add_argument(
         "--prompt-overrides",

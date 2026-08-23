@@ -71,9 +71,9 @@ PROMPT_PROFILE = "default"
 
 MODEL_PROMPT_PROFILES = {
     # Exact names or lowercase substrings are accepted.
-    # "qwen2.5vl": "entity_focused",
-    # "gemma3": "document_focused",
-    # "phi3.5": "layout_focused",
+    # "gemma3": "gemma3_focused",
+    # "gemma4": "gemma4_focused",
+    # "qwen3-vl": "qwen3vl_focused",
 }
 
 MODEL_PROMPT_OVERRIDES = {

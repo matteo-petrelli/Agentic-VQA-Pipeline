@@ -48,15 +48,15 @@ Choose a default profile in `config.py`:
 PROMPT_PROFILE = "default"
 ```
 
-Available candidate profiles are `default`, `entity_focused`, `document_focused` and `layout_focused`.
+Available profiles are `default`, `gemma3_focused`, `gemma4_focused`, and `qwen3vl_focused`.
 
 Map models to profiles:
 
 ```python
 MODEL_PROMPT_PROFILES = {
-    "qwen2.5vl": "entity_focused",
-    "gemma3": "document_focused",
-    "phi3.5": "layout_focused",
+    "gemma3": "gemma3_focused",
+    "gemma4": "gemma4_focused",
+    "qwen3-vl": "qwen3vl_focused",
 }
 ```
 

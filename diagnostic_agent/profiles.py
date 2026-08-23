@@ -35,19 +35,8 @@ PROMPT_PROFILES: dict[str, PromptProfile] = {
         verifier_prompt="answerability_verifier_v1",
         metadata={"status": "initial configuration; requires model-specific evaluation"},
     ),
-    "entity_focused": PromptProfile(
-        name="entity_focused",
-        cause_prompts={
-            **DEFAULT_CAUSE_PROMPTS,
-            CauseCode.RELATION_MISMATCH: "nlp_list_ocr_cot",
-            CauseCode.UNSUPPORTED_PRESUPPOSITION: "nlp_list_ocr_cot",
-        },
-        answerer_prompt="nlp_list_ocr_cot",
-        verifier_prompt="answerability_verifier_v1",
-        metadata={"status": "candidate profile; requires evaluation"},
-    ),
-    "document_focused": PromptProfile(
-        name="document_focused",
+    "gemma3_focused": PromptProfile(
+        name="gemma3_focused",
         cause_prompts={
             **DEFAULT_CAUSE_PROMPTS,
             CauseCode.ENTITY_MISSING: "docel_cot_v3",
@@ -58,19 +47,7 @@ PROMPT_PROFILES: dict[str, PromptProfile] = {
         },
         answerer_prompt="docel_cot_v3",
         verifier_prompt="answerability_verifier_v1",
-        metadata={"status": "candidate profile; requires evaluation"},
-    ),
-    "layout_focused": PromptProfile(
-        name="layout_focused",
-        cause_prompts={
-            **DEFAULT_CAUSE_PROMPTS,
-            CauseCode.DOCUMENT_ELEMENT_MISMATCH: "layout_v3",
-            CauseCode.SPATIAL_MISMATCH: "layout_v3",
-            CauseCode.EVIDENCE_MISSING: "layout_v3",
-        },
-        answerer_prompt="baseline_ocr",
-        verifier_prompt="answerability_verifier_v1",
-        metadata={"status": "candidate profile; requires evaluation"},
+        metadata={"status": "gemma3:4b optimized profile based on prompt benchmark"},
     ),
     "gemma4_focused": PromptProfile(
         name="gemma4_focused",
@@ -119,6 +96,8 @@ PROMPT_PROFILES: dict[str, PromptProfile] = {
 # Assign a profile name to a model after model-level prompt analysis. Exact model
 # names and lowercase substrings are both accepted. Empty means use PROMPT_PROFILE.
 MODEL_PROFILE_MAP: dict[str, str] = {
+    "gemma3": "gemma3_focused",
+    "gemma-3": "gemma3_focused",
     "gemma4": "gemma4_focused",
     "gemma-4": "gemma4_focused",
     "qwen3-vl": "qwen3vl_focused",
