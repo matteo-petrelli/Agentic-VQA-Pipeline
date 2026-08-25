@@ -215,7 +215,8 @@ def update_csv_file(csv_path, evaluations):
 
 def main():
     base_dir = Path(r"c:\Tesi\Agentic-VQA-Pipeline\Agentic_results")
-    models = ["gemma3", "gemma4", "qwen2.5"]
+    json_files = sorted(base_dir.glob("human_review_sample_*.json"))
+    models = [f.stem.replace("human_review_sample_", "") for f in json_files]
     
     summary_stats = {}
 
