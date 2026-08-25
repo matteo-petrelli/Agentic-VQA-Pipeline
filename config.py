@@ -1,11 +1,19 @@
 """Configuration for the unanswerability diagnostic pipeline."""
 
 # Model and inference
+# Backend: "ollama" (Gemma, Qwen, etc.) or "transformers" (Phi-3.5-Vision, etc.)
+VLM_BACKEND = "ollama"
 OLLAMA_VLM = "qwen2.5vl:3b"
 OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_TIMEOUT = 300
 VLM_MAX_TOKENS = 1024
 AGENT_TEMPERATURE = 0.0
+
+# HuggingFace transformers backend (used when VLM_BACKEND = "transformers")
+HF_VLM_MODEL_NAME = "microsoft/Phi-3.5-vision-instruct"
+HF_VLM_DEVICE = "cuda:1"
+HF_VLM_DTYPE = "float16"  # "float16", "bfloat16", or "float32"
+HF_VLM_CACHE_DIR = "/tmp/hf_cache"
 
 # Evidence models
 EVIDENCE_DEVICE = "cuda:0"

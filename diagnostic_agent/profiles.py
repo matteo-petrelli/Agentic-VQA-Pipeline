@@ -90,6 +90,31 @@ PROMPT_PROFILES: dict[str, PromptProfile] = {
         verifier_prompt="answerability_verifier_v1",
         metadata={"status": "qwen3-vl:8b optimized profile based on metrics_summary_1.csv"},
     ),
+    "phi35_focused": PromptProfile(
+        name="phi35_focused",
+        cause_prompts={
+            # Layout v1 dominates: QUR=0.8503, UR=0.9576, best overall for Phi-3.5
+            CauseCode.SPATIAL_MISMATCH: "layout_v1",
+            CauseCode.DOCUMENT_ELEMENT_MISMATCH: "layout_v1",
+            CauseCode.EVIDENCE_MISSING: "layout_v1",
+            # DocEl CoT v3: QUR=0.7433, UR=0.9195, strong on document structure
+            CauseCode.RELATION_MISMATCH: "docel_cot_v3",
+            CauseCode.ANSWER_TYPE_MISMATCH: "docel_cot_v3",
+            CauseCode.UNSUPPORTED_PRESUPPOSITION: "docel_cot_v3",
+            # DocEl CoT v3 also used for entity/value/temporal causes because
+            # NLP List and NLP Tag crash on Phi-3.5 (error rate >60% / ~6%)
+            CauseCode.ENTITY_MISSING: "docel_cot_v3",
+            CauseCode.ENTITY_MISMATCH: "docel_cot_v3",
+            CauseCode.VALUE_MISMATCH: "docel_cot_v3",
+            CauseCode.TEMPORAL_MISMATCH: "docel_cot_v3",
+            CauseCode.AMBIGUOUS_TARGET: "docel_cot_v3",
+            CauseCode.EXTRACTION_FAILURE: "answerability_verifier_v1",
+        },
+        # Layout v1 as answerer: best QUR/UR overall for Phi-3.5-Vision
+        answerer_prompt="layout_v1",
+        verifier_prompt="answerability_verifier_v1",
+        metadata={"status": "phi-3.5-vision optimized profile based on metrics_summary.csv"},
+    ),
 }
 
 
@@ -102,6 +127,9 @@ MODEL_PROFILE_MAP: dict[str, str] = {
     "gemma-4": "gemma4_focused",
     "qwen3-vl": "qwen3vl_focused",
     "qwen3vl": "qwen3vl_focused",
+    "phi3.5": "phi35_focused",
+    "phi-3.5": "phi35_focused",
+    "phi35": "phi35_focused",
 }
 
 

@@ -1,4 +1,9 @@
-"""Production engine for Ollama VLM, DOTS.OCR, and GLiNER."""
+"""Production engine for VLM inference, DOTS.OCR, and GLiNER.
+
+Supports two VLM backends:
+  - "ollama": HTTP calls to an Ollama server (Gemma, Qwen, etc.)
+  - "transformers": Direct HuggingFace inference (Phi-3.5-Vision, etc.)
+"""
 
 import base64
 import io
@@ -84,6 +89,55 @@ class DocumentEngine:
             config.EVIDENCE_DEVICE
         )
 
+        # Transformers VLM backend (lazy-loaded)
+        self._hf_vlm_model = None
+        self._hf_vlm_processor = None
+
+    # ------------------------------------------------------------------
+    # Transformers VLM backend setup
+    # ------------------------------------------------------------------
+
+    def setup_transformers_vlm(self) -> None:
+        """Load the HuggingFace VLM model for direct inference.
+
+        Called automatically on first ``infer()`` call when
+        ``config.VLM_BACKEND == "transformers"``, or can be called
+        explicitly from a notebook for eager loading.
+        """
+        if self._hf_vlm_model is not None:
+            return  # Already loaded
+
+        from transformers import AutoConfig, AutoModelForCausalLM, AutoProcessor
+
+        dtype_map = {
+            "float16": self.torch.float16,
+            "bfloat16": self.torch.bfloat16,
+            "float32": self.torch.float32,
+        }
+        torch_dtype = dtype_map.get(config.HF_VLM_DTYPE, self.torch.float16)
+
+        print(f"Loading HuggingFace VLM: {config.HF_VLM_MODEL_NAME} ...")
+        model_config = AutoConfig.from_pretrained(
+            config.HF_VLM_MODEL_NAME, trust_remote_code=True
+        )
+        self._hf_vlm_model = AutoModelForCausalLM.from_pretrained(
+            config.HF_VLM_MODEL_NAME,
+            config=model_config,
+            trust_remote_code=True,
+            torch_dtype=torch_dtype,
+            cache_dir=config.HF_VLM_CACHE_DIR,
+            device_map={"": config.HF_VLM_DEVICE},
+            attn_implementation="eager",
+        ).eval()
+        self._hf_vlm_processor = AutoProcessor.from_pretrained(
+            config.HF_VLM_MODEL_NAME, trust_remote_code=True
+        )
+        print(f"HuggingFace VLM loaded on {config.HF_VLM_DEVICE}.")
+
+    # ------------------------------------------------------------------
+    # Evidence extraction (DOTS + GLiNER) — unchanged
+    # ------------------------------------------------------------------
+
     def _resolve_image(self, image_path: str) -> str:
         if os.path.exists(image_path):
             return image_path
@@ -165,7 +219,28 @@ class DocumentEngine:
             entity_labels.append(f"{label}: {value.strip().lower()}")
         return tagged, sorted(set(entity_labels))
 
+    # ------------------------------------------------------------------
+    # VLM inference — dispatches to Ollama or Transformers
+    # ------------------------------------------------------------------
+
     def infer(
+        self,
+        prompt: str,
+        image_paths: list[str] | None = None,
+        *,
+        json_mode: bool = True,
+        temperature: float | None = None,
+    ) -> str:
+        backend = getattr(config, "VLM_BACKEND", "ollama")
+        if backend == "transformers":
+            return self._infer_transformers(prompt, image_paths, json_mode=json_mode)
+        return self._infer_ollama(prompt, image_paths, json_mode=json_mode, temperature=temperature)
+
+    # ------------------------------------------------------------------
+    # Ollama backend (original)
+    # ------------------------------------------------------------------
+
+    def _infer_ollama(
         self,
         prompt: str,
         image_paths: list[str] | None = None,
@@ -195,3 +270,83 @@ class DocumentEngine:
         response = requests.post(config.OLLAMA_URL, json=payload, timeout=config.OLLAMA_TIMEOUT)
         response.raise_for_status()
         return response.json()["message"]["content"]
+
+    # ------------------------------------------------------------------
+    # HuggingFace Transformers backend (Phi-3.5-Vision, etc.)
+    # ------------------------------------------------------------------
+
+    def _infer_transformers(
+        self,
+        prompt: str,
+        image_paths: list[str] | None = None,
+        *,
+        json_mode: bool = True,
+    ) -> str:
+        # Lazy-load the model on first call
+        if self._hf_vlm_model is None:
+            self.setup_transformers_vlm()
+
+        resolved_paths = []
+        if image_paths:
+            resolved_paths = [self._resolve_image(p) for p in image_paths]
+
+        # If json_mode is requested, wrap the prompt with a JSON instruction
+        effective_prompt = prompt
+        if json_mode:
+            effective_prompt = (
+                prompt + "\n\nIMPORTANT: Respond with valid JSON only. "
+                "Do not include any text outside the JSON object."
+            )
+
+        # Build Phi-3 specific multi-image prompt with <|image_N|> placeholders
+        user_token = "<|user|>\n"
+        assistant_token = "<|assistant|>\n"
+        end_token = "<|end|>\n"
+
+        if not resolved_paths:
+            full_prompt = (
+                f"{user_token}{effective_prompt}{end_token}{assistant_token}"
+            )
+            images = None
+        elif len(resolved_paths) == 1:
+            full_prompt = (
+                f"{user_token}<|image_1|>\n {effective_prompt}"
+                f"{end_token}{assistant_token}"
+            )
+            images = PIL.Image.open(resolved_paths[0]).convert("RGB")
+        else:
+            image_tags = "".join(
+                f"<|image_{i + 1}|>\n" for i in range(len(resolved_paths))
+            )
+            full_prompt = (
+                f"{user_token}{image_tags} {effective_prompt}"
+                f"{end_token}{assistant_token}"
+            )
+            images = [PIL.Image.open(p).convert("RGB") for p in resolved_paths]
+
+        device = next(self._hf_vlm_model.parameters()).device
+
+        with self.torch.inference_mode():
+            inputs = self._hf_vlm_processor(
+                full_prompt, images, return_tensors="pt"
+            ).to(device)
+
+            generate_ids = self._hf_vlm_model.generate(
+                **inputs,
+                max_new_tokens=config.VLM_MAX_TOKENS,
+                eos_token_id=self._hf_vlm_processor.tokenizer.eos_token_id,
+            )
+
+            # Trim prompt tokens
+            generate_ids = generate_ids[:, inputs["input_ids"].shape[1] :]
+            response = self._hf_vlm_processor.batch_decode(
+                generate_ids,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )[0].strip()
+
+        del inputs
+        del generate_ids
+        self.torch.cuda.empty_cache()
+
+        return response
