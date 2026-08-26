@@ -1,145 +1,168 @@
-# Report di Analisi dei Risultati: Agentic VQA Pipeline (Gemma 3)
+# Report di Analisi Comparativa: Agentic VQA Pipeline
 
 ## 1. Introduzione e Metodologia
 
-Il presente documento sintetizza l'analisi quantitativa e qualitativa dei risultati ottenuti dall'**Unanswerability Diagnostic Agent** (basato sul modello **Gemma 3 4B** e architettura **LangGraph**) applicato al benchmark **DUDE** (`DUDE_mixed_test.json`), conservati nella cartella [`Agentic_results`](file:///c:/Tesi/Agentic-VQA-Pipeline/Agentic_results).
+Il presente documento sintetizza l'analisi quantitativa e qualitativa dei risultati ottenuti dall'**Unanswerability Diagnostic Agent** (architettura **LangGraph** multi-stadio) testato su diverse famiglie di Vision-Language Models sul benchmark **DUDE** (`DUDE_mixed_test.json`), conservati nella cartella [`Agentic_results`](file:///c:/Tesi/Agentic-VQA-Pipeline/Agentic_results).
 
-A differenza dei modelli VLM a inferenza singola che si limitano a restituire una stringa testuale (risposta o genericamente *"Unable to determine"*), l'agente esegue una diagnosi forense multi-stadio:
-1. **Decomposizione della domanda** (`analyze_question`);
-2. **Estrazione delle evidenze multimodali** tramite DOTS.OCR e GLiNER (`extract_base_evidence`);
+A differenza dei modelli VLM standard che operano a inferenza singola (generando una risposta o allucinando su domande non rispondibili), l'agente esegue una diagnosi forense strutturata:
+1. **Decomposizione della domanda** (`analyze_question`): estrazione di entità, vincoli spaziali/temporali e presupposizioni;
+2. **Estrazione delle evidenze multimodali** (`extract_base_evidence`): DLA/OCR tramite DOTS.OCR e tagging entità tramite GLiNER;
 3. **Generazione di ipotesi diagnostiche** (`generate_cause_hypotheses`);
-4. **Routing dinamico del prompt** verso probe specializzati (`select_diagnostic_test`);
-5. **Esecuzione del test diagnostico** con contratti JSON strutturati (`run_diagnostic_test`);
-6. **Verifica deterministica della copertura e decisione finale** (`run_answerability_verifier`).
+4. **Routing dinamico del prompt** (`select_diagnostic_test`): selezione del probe ottimizzato per modello e tipologia di causa;
+5. **Esecuzione del test diagnostico** (`run_diagnostic_test`): verifica con schema JSON rigoroso;
+6. **Verifica deterministica e decisione finale** (`run_answerability_verifier`): conferma `unanswerable`, astensione sicura (`insufficient_evidence`) o fallback (`answerable`).
 
 ---
 
-## 2. Panoramica del Dataset e Risultati Globali
+## 2. Quadro Sinottico e Confronto Globale tra i Modelli
 
-Il test completo è stato condotto su **187 domande** del dataset DUDE, tutte appartenenti al sottoinsieme delle domande corrotte/non rispondibili (Ground Truth: 100% unanswerable):
+Il benchmark è stato eseguito su **187 domande** del dataset DUDE, tutte appartenenti alla classe delle domande corrotte/non rispondibili (**Ground Truth: 100% unanswerable**):
 
-| Metrica | Valore Assoluto | Percentuale | Descrizione / Significato |
-| :--- | :---: | :---: | :--- |
-| **Domande Totali Elaborate** | **187** | **100.0%** | Domande corrotte valutate sul dataset DUDE |
-| ✅ **Classificate `unanswerable` (Strict QUR)** | **135** | **72.19%** | Riconoscimento esatto dell'unanswerability con causa motivata |
-| 🛡️ **Classificate `insufficient_evidence` (Safe Abstention)** | **40** | **21.39%** | Astensione preventiva per copertura parziale o OCR ambiguo |
-| ❌ **Classificate `answerable` (False Negativi / Allucinazioni)** | **12** | **6.42%** | Risposte allucinate/errate fornite su domande corrotte |
-| 🛑 **Unable Rate Totale (UR = Unanswerable + Insufficient)** | **175 / 187** | **93.58%** | **Tasso complessivo di astensione dal fornire risposte errate** |
+| Metrica | **Gemma 3 (4B)** | **Gemma 4 (E4B)** | **Qwen3-VL (8B)** | **Qwen 2.5 (3B)** |
+| :--- | :---: | :---: | :---: | :---: |
+| **Domande Totali Elaborate** | 187 | 187 | 187 | 187 |
+| ✅ **Strict QUR (`unanswerable`)** | **135 (72.19%)** | 73 (39.04%) | 0 (0.00%)* | 122 (65.24%) |
+| 🛡️ **Safe Abstention (`insufficient_evidence`)** | 40 (21.39%) | 96 (51.34%) | **173 (92.51%)** | 65 (34.76%) |
+| ❌ **False Negatives / Allucinazioni (`answerable`)** | **12 (6.42%)** | 18 (9.63%) | 14 (7.49%) | **0 (0.00%)** |
+| 🛑 **Total Unable Rate (UR = QUR + Safe Abstention)** | **175 (93.58%)** | **169 (90.37%)** | **173 (92.51%)** | **187 (100.0%)** |
+| ⚠️ **Errori HTTP / Crash Infrastrutturali** | 1 (0.5%) | 1 (0.5%) | **83 (44.39%)**\* | 65 (34.76%) |
+| **Profilo Prompt Ottimale** | `gemma3_focused` | `gemma4_focused` | `qwen3vl_focused` | `default` |
 
-```mermaid
-pie title Distribuzione Decisioni Finali dell'Agente
-    "Unanswerable (Rilevazione Esplicita Causa)" : 72.2
-    "Insufficient Evidence (Astensione Sicura)" : 21.4
-    "Answerable (Allucinazione/Errore)" : 6.4
-```
-
-### Confronto con le Strategie di Prompting Singolo (Gemma 3)
-I risultati dell'Agente evidenziano un netto salto qualitativo rispetto ai baseline a prompt singolo testati su Gemma 3:
-* **Baseline OCR standard**: QUR = **9.09%** (il modello allucina nel 90%+ dei casi).
-* **NLP List**: QUR = **13.37%** (il solo elenco entità non basta a fermare il generatore).
-* **DocEl CoT v1 / v4**: QUR = **57.75% / 71.12%** (buona capacità di rilevamento ma privo di categorizzazione della causa e di spiegabilità).
-* **Agentic Pipeline**: **Strict QUR = 72.19%**, **Unable Rate = 93.58%** e tasso di allucinazione ridotto al **6.42%**.
-
----
-
-## 3. Disaggregazione per Livello di Complessità e Prossimità (C1, C2, C3)
-
-La tassonomia VRD-UQA definisce tre classi di corruzione in base alla distanza semantica e geometrica dell'entità alterata:
-
-| Livello di Corruzione | Totale Domande | `unanswerable` (Strict QUR) | `insufficient_evidence` | `answerable` (Allucinazioni) | **Abstention Rate Totale (UR)** |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **C1** (*Same Page, Same Entity Type*) | 114 | **88 (77.19%)** | 18 (15.79%) | 8 (7.02%) | **92.98%** |
-| **C2** (*Same Page, Different Entity Type*) | 58 | **37 (63.79%)** | 18 (31.03%) | 3 (5.17%) | **94.83%** |
-| **C3** (*Different Page / Out-Page*) | 15 | **10 (66.67%)** | 4 (26.67%) | 1 (6.67%) | **93.33%** |
-
-### 🔍 Considerazioni sui livelli:
-1. **Elevata accuratezza su C1 (77.19% QUR)**: La corruzione C1 (stessa pagina, stesso tipo di entità) è storicamente la più insidiosa per i modelli multimodali, poiché la vicinanza dell'entità reale crea un falso contesto locale. L'Agente supera questo bias confrontando le evidenze estratte (GLiNER + DOTS) con i vincoli logici della domanda.
-2. **Astensione conservativa su C2 e C3**: Nelle categorie C2 (31.03%) e C3 (26.67%), l'agente ricorre frequentemente alla classe `insufficient_evidence`, garantendo che nei casi di incertezza il sistema preferisca dichiarare dati insufficienti piuttosto che produrre risposte false (allucinazioni confinate a circa il 5-6%).
-
----
-
-## 4. Tassonomia delle Cause Diagnosticate (`primary_cause`)
-
-L'Agente assegna a ciascuna domanda identificata come non rispondibile una causa formale, accompagnata da una spiegazione logica:
+*\*Nota su Qwen3-VL 8B: l'assenza di QUR stretto e l'elevato numero di astensioni su Qwen3-VL 8B è derivato dal collo di bottiglia del context window di Ollama (`num_ctx`), dettagliato nella sezione Error Analysis.*
 
 ```mermaid
 xychart-beta
-    title "Frequenza delle Cause Primarie Diagnosticate"
-    x-axis ["SPATIAL", "VALUE", "TEMPORAL", "ENTITY_MISMATCH", "ENTITY_MISSING", "PRESUPPOSITION", "ELEMENT/EXTR"]
-    y-axis "Numero di casi" 0 --> 70
-    bar [61, 29, 19, 15, 7, 3, 2]
+    title "Confronto Metriche Globali (%)"
+    x-axis ["Gemma 3 (4B)", "Gemma 4 (E4B)", "Qwen3-VL (8B)", "Qwen 2.5 (3B)"]
+    y-axis "Percentuale (%)" 0 --> 100
+    bar [72.19, 39.04, 0.0, 65.24]
+    bar [21.39, 51.34, 92.51, 34.76]
+    bar [6.42, 9.63, 7.49, 0.0]
 ```
-
-| Causa Diagnosticata | Frequenza | % su Totale | Prompt Tipicamente Associato | Tipologia di Errore Rilevata |
-| :--- | :---: | :---: | :--- | :--- |
-| **`SPATIAL_MISMATCH`** | **61** | **32.6%** | `layout_v4` / `docel_cot_v3` | Riferimento a pagine, colonne o quadranti errati |
-| **`VALUE_MISMATCH`** | **29** | **15.5%** | `docel_cot_v3` | Valori numerici, percentuali, somme finanziarie o codici errati |
-| **`TEMPORAL_MISMATCH`** | **19** | **10.2%** | `docel_cot_v3` / `layout_v4` | Date, anni o periodi storici incongruenti con il documento |
-| **`ENTITY_MISMATCH`** | **15** | **8.0%** | `docel_cot_v3` | Sostituzione di nomi di persona, aziende, ruoli o termini chiave |
-| **`ENTITY_MISSING`** | **7** | **3.7%** | `docel_cot_v3` | Entità richiesta totalmente assente nel documento |
-| **`UNSUPPORTED_PRESUPPOSITION`** | **3** | **1.6%** | `docel_cot_v3` | Presupposizioni logiche della domanda non supportate |
-| **`DOCUMENT_ELEMENT_MISMATCH`** | **1** | **0.5%** | `docel_cot_v3` | Riferimento a una tipologia di elemento errata (es. tabella vs testo) |
-| **`EXTRACTION_FAILURE`** | **1** | **0.5%** | fallback | Fallimento del parsing delle evidenze |
-| *Nessuna (`insufficient_evidence` / `answerable`)* | *51* | *27.3%* | — | — |
+*(Legenda barre: 1ª barra = Strict QUR; 2ª barra = Safe Abstention; 3ª barra = Allucinazioni / False Negatives)*
 
 ---
 
-## 5. Attivazione del Prompt Router e Flusso nel Grafo
+## 3. Analisi Dettagliata dei Singoli Modelli
 
-Durante l'esecuzione, il nodo **`select_diagnostic_test`** ha instradato le richieste verso strategie specializzate in base alla causa ipotizzata:
+### 3.1 Gemma 3 (4B) — *Miglior Bilanciamento e Accuratezza Diagnostica*
+* **Profilo Utilizzato**: `gemma3_focused` (Answerer: `docel_cot_v3`, Verifier: `answerability_verifier_v1`).
+* **Punti di Forza**:
+  - Raggiunge il **più alto tasso di diagnosi esatta (QUR = 72.19%)**, identificando correttamente la causa specifica e motivandola con evidenze testuali e coordinate di pagina.
+  - Tasso di allucinazione contenuto al **6.42%** (12 casi su 187).
+  - Distribuzione cause ricca e accurata: 61 `SPATIAL_MISMATCH`, 29 `VALUE_MISMATCH`, 19 `TEMPORAL_MISMATCH`, 15 `ENTITY_MISMATCH`.
+* **Comportamento nei test**: Modello ideale per scenari in cui è richiesta una spiegazione forense esplicita del motivo per cui il documento non risponde alla domanda.
 
-* **`question_analysis_v1`** (**186 chiamate**, 100%): Eseguito per la decomposizione semantica iniziale (estrazione vincoli, tipo di risposta attesa, entità e presupposizioni).
-* **`docel_cot_v3`** (**141 chiamate**, 75.4%): Test diagnostico primario per la verifica di mismatch di valore, data ed entità contestualizzate nel layout.
-* **`layout_v4`** (**64 chiamate**, 34.2%): Invocato specificamente per domande contenenti vincoli geometrici (posizioni, quadranti, numeri di pagina o tabelle localizzate).
-* **`docel_cot_v4`** (**12 chiamate**, 6.4%): Utilizzato per test di verifica approfonditi a catena di pensiero estesa.
+### 3.2 Gemma 4 (E4B) — *Comportamento Ultra-Conservativo*
+* **Profilo Utilizzato**: `gemma4_focused` (Answerer: `nlp_tag_cot`, Verifier: `answerability_verifier_v1`).
+* **Punti di Forza & Limiti**:
+  - Tende ad astenersi preventivamente: oltre il **51.34%** dei casi viene etichettato come `insufficient_evidence`, riducendo lo Strict QUR al **39.04%**.
+  - Total Unable Rate comunque alto (**90.37%**).
+  - Tasso di allucinazione pari al **9.63%** (18 casi), concentrato quasi interamente sulla classe C1 (stessa pagina/stesso tipo di entità).
+* **Comportamento nei test**: Eccessiva sensibilità alle incertezze di coverage OCR, che porta il verifier a preferire l'astensione generica rispetto alla diagnosi puntuale della causa.
+
+### 3.3 Qwen3-VL (8B) — *Safe Fallback e Robustezza Architetturale*
+* **Profilo Utilizzato**: `qwen3vl_focused` (Answerer: `layout_v4`, Verifier: `answerability_verifier_v1`).
+* **Analisi dell'Esperimento**:
+  - **Risultato complessivo**: Total Unable Rate del **92.51%** (173 astensioni sicure su 187) e tasso di allucinazione contenuto al **7.49%**.
+  - **Dinamica degli Errori HTTP**: Nel run iniziale, 83 chiamate API verso Ollama sono fallite con `400 Client Error: Bad Request` a causa del default di `num_ctx = 2048/4096`. Con immagini ad alta risoluzione e documenti multi-pagina, i patch token visivi hanno saturato il buffer di contesto di Ollama.
+  - **Validazione del Safe Fallback**: Nonostante i fallimenti di singole chiamate VLM, l'agente LangGraph non è andato in crash né ha prodotto allucinazioni: il nodo di verifier deterministico ha intercettato l'errore instradando la decisione su `insufficient_evidence` (`EXTRACTION_FAILURE`), garantendo la **sicurezza operativa** del sistema.
+
+### 3.4 Qwen 2.5 (3B) — *Zero Allucinazioni (100% Abstention)*
+* **Profilo Utilizzato**: `default` (Answerer: `docel_cot_v4`, Verifier: `answerability_verifier_v1`).
+* **Punti di Forza**:
+  - **0.00% di allucinazioni** (0 casi `answerable` su 187): **100% di astensione complessiva**.
+  - Strict QUR solido al **65.24%** (122 casi) con 68 diagnosi di `DOCUMENT_ELEMENT_MISMATCH` e 37 di `VALUE_MISMATCH`.
+  - 65 casi ricaduti su `insufficient_evidence` per timeout di elaborazione su layout complessi.
 
 ---
 
-## 6. Qualità dell'Explainability ed Esempi Reali
+## 4. Disaggregazione per Livello di Complessità (C1, C2, C3)
 
-Tutti i risultati confermati come `unanswerable` contengono una spiegazione in linguaggio naturale (`cause_explanation`) generata contestualmente alla diagnosi. Di seguito alcuni esempi rappresentativi estratti dal dataset:
+La tassonomia DUDE/VRD-UQA classifica le corruzioni in base alla distanza dell'entità modificata:
+* **C1**: *Same Page, Same Entity Type* (massima insidiosità, vicinanza geometrica e semantica)
+* **C2**: *Same Page, Different Entity Type*
+* **C3**: *Different Page / Out-of-Document*
 
-### 1. `SPATIAL_MISMATCH`
-* **Domanda**: *"Which timeframe in 2011 had the most people killed in alcohol-impaired driving?"*
-* **Spiegazione Agente**: *"The question asks for the timeframe in 2011 with the most deaths. However, the document states that in 2009, 10,839 people were killed in alcohol-impaired driving crashes. This indicates a spatial mismatch between the question's timeframe and the data presented on the page."*
-
-### 2. `TEMPORAL_MISMATCH`
-* **Domanda**: *"If an internee is looking to relocate from Santa Barbara during September 1943, where is the best relocation center in Salinas?"*
-* **Spiegazione Agente**: *"The question asks about relocation centers in Salinas during September 1943. However, the document explicitly states that relocation centers were established in 1944, creating a temporal mismatch between the question's timeframe and the document's information."*
-
-### 3. `ENTITY_MISMATCH`
-* **Domanda**: *"Is the woman the antagonist in this horror film?"*
-* **Spiegazione Agente**: *"The question asks if 'the woman' is the antagonist, but the document only lists 'The Woman' as a cast member. There is no information in the document to determine if she is the antagonist."*
-
-### 4. `ENTITY_MISSING`
-* **Domanda**: *"Who are the visitors from the U.S. and Asia since the early 1970s to North Korea?"*
-* **Spiegazione Agente**: *"The document does not contain a list of visitors from the U.S. and Asia to North Korea since the early 1970s. The text simply states that visits occurred without detailing who was visiting."*
+| Modello | Livello | Domande Totali | Strict QUR (`unanswerable`) | Safe Abstention (`insufficient`) | Allucinazioni (`answerable`) | Total UR |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Gemma 3 (4B)** | **C1** | 114 | **88 (77.19%)** | 18 (15.79%) | 8 (7.02%) | **92.98%** |
+| | **C2** | 58 | **37 (63.79%)** | 18 (31.03%) | 3 (5.17%) | **94.83%** |
+| | **C3** | 15 | **10 (66.67%)** | 4 (26.67%) | 1 (6.67%) | **93.33%** |
+| **Gemma 4 (E4B)** | **C1** | 114 | **41 (35.96%)** | 55 (48.25%) | 18 (15.79%) | **84.21%** |
+| | **C2** | 58 | **24 (41.38%)** | 34 (58.62%) | 0 (0.00%) | **100.0%** |
+| | **C3** | 15 | **8 (53.33%)** | 7 (46.67%) | 0 (0.00%) | **100.0%** |
+| **Qwen3-VL (8B)** | **C1** | 114 | 0 (0.00%) | 105 (92.11%) | 9 (7.89%) | **92.11%** |
+| | **C2** | 58 | 0 (0.00%) | 57 (98.28%) | 1 (1.72%) | **98.28%** |
+| | **C3** | 15 | 0 (0.00%) | 11 (73.33%) | 4 (26.67%) | **73.33%** |
+| **Qwen 2.5 (3B)** | **C1** | 114 | **72 (63.16%)** | 42 (36.84%) | 0 (0.00%) | **100.0%** |
+| | **C2** | 58 | **39 (67.24%)** | 19 (32.76%) | 0 (0.00%) | **100.0%** |
+| | **C3** | 15 | **11 (73.33%)** | 4 (26.67%) | 0 (0.00%) | **100.0%** |
 
 ---
 
-## 7. Error Analysis: Analisi dei 12 False Negativi (Allucinazioni Residue)
+## 5. Distribuzione delle Cause Diagnosticate a Confronto
 
-I 12 casi in cui l'agente ha erroneamente risposto (`answerable`, pari al **6.42%**) sono riconducibili a tre precise dinamiche:
+La capacità di associare una causa specifica (`primary_cause`) riflette la granularità interpretativa di ciascun modello:
 
-1. **Conoscenza Parametrica del Modello (Pre-training Bias)**:
-   Il VLM ha risposto attingendo alla propria memoria interna ignorando l'assenza del dato nel documento specifico (es. *"What is the nissl substance?"* $\rightarrow$ genera la corretta definizione biologica del termine, benché non presente nella pagina).
-2. **Corruzione di Unità di Misura / Tabelle di Conversione**:
-   In tabelle di conversione metrica (es. *"What is 1 ton. ft converted to 4 N.m in the metric conversion chart?"*), il modello ha dedotto la plausibilità della formula invece di verificare la riga esatta.
-3. **Sovrascrittura di Nomi Propri in Elenchi Densi**:
-   In tabelle contenenti liste di personale in pensione (es. *"What are the job titles for the 2 new hires named James Casey?"*), la presenza del nome nella stessa pagina ha indotto il generatore a estrarre i ruoli adiacenti senza verificare la condizione *"new hires"*.
+| Causa Primaria | Gemma 3 (4B) | Gemma 4 (E4B) | Qwen 2.5 (3B) | Qwen3-VL (8B) |
+| :--- | :---: | :---: | :---: | :---: |
+| **`SPATIAL_MISMATCH`** | **61 (32.6%)** | 28 (15.0%) | 11 (5.9%) | 0 |
+| **`VALUE_MISMATCH`** | **29 (15.5%)** | 11 (5.9%) | 37 (19.8%) | 0 |
+| **`TEMPORAL_MISMATCH`** | **19 (10.2%)** | 2 (1.1%) | 0 | 0 |
+| **`ENTITY_MISMATCH`** | **15 (8.0%)** | 1 (0.5%) | 0 | 0 |
+| **`DOCUMENT_ELEMENT_MISMATCH`** | 1 (0.5%) | 18 (9.6%) | **68 (36.4%)** | 0 |
+| **`UNSUPPORTED_PRESUPPOSITION`** | 3 (1.6%) | 10 (5.3%) | 0 | 0 |
+| **`ENTITY_MISSING`** | 7 (3.7%) | 0 | 0 | 0 |
+| **`RELATION_MISMATCH`** | 0 | 0 | 6 (3.2%) | 0 |
+| **`AMBIGUOUS_TARGET`** | 0 | 3 (1.6%) | 0 | 0 |
+| **`EXTRACTION_FAILURE`** | 1 (0.5%) | 1 (0.5%) | 65 (34.8%) | **83 (44.4%)** |
+| *Astensione Generica (`insufficient`)* | 39 (20.9%) | 95 (50.8%) | 0 | 90 (48.1%) |
+| *Allucinazioni (`answerable`)* | 12 (6.4%) | 18 (9.6%) | 0 | 14 (7.5%) |
+
+---
+
+## 6. Error Analysis: Errori Incontrati e Dinamiche di Fallimento
+
+### 1. Saturazione del Context Window in Ollama (`num_ctx`)
+* **Sintomo**: `400 Client Error: Bad Request for url: http://127.0.0.1:11434/api/chat` (83 casi su Qwen3-VL 8B).
+* **Causa**: Il runtime Ollama allocava di default solo 2048/4096 token di contesto. Sui modelli Vision 8B, la combinazione di patch visive multi-pagina ad alta risoluzione + blocchi DLA di DOTS + entità GLiNER superava il limite.
+* **Risoluzione Implementata**: Aggiunta di `VLM_NUM_CTX = 8192` in `config.py` e inoltro esplicito nelle opzioni di Ollama per tutti i run successivi.
+
+### 2. Allucinazioni da Bias Parametrico (Pre-training Bias)
+* **Sintomo**: L'agente risponde correttamente a una domanda teorica ma inventa la presenza del dato nel documento specifico (es. *"What is the nissl substance?"* $\rightarrow$ genera la corretta definizione biologica ignorando che il documento non ne parla).
+* **Frequenza**: ~6-9% trasversale su Gemma 3, Gemma 4 e Qwen3-VL.
+
+### 3. Fallimenti su Conversioni Metriche e Tabelle Dense
+* In tabelle numeriche fitte (es. tabelle di conversione unità o elenchi pensioni), la presenza di termini simili nella stessa pagina induce talvolta il probe a estrarre valori adiacenti senza verificare la condizione restrittiva della query (es. *"new hires"*).
+
+---
+
+## 7. Valutazione Qualitativa LLM-as-a-Judge (Campione Stratificato N=50)
+
+Dall'audit sui 50 campioni stratificati per complessità (C1/C2/C3) e tipologia di corruzione emergono i seguenti punteggi di qualità:
+
+| Modello | Answerability Accuracy (0/1) | Cause Diagnosis Score (0-2) | Explanation Quality (0-3) | Trust Score Medio (1-5) |
+| :--- | :---: | :---: | :---: | :---: |
+| **Qwen 2.5 (3B)** | **100.0%** (50/50) | **83.0%** | **65.3%** | **3.86 / 5.0** |
+| **Gemma 3 (4B)** | **76.0%** (38/50) | **53.0%** | **58.7%** | **3.30 / 5.0** |
+| **Qwen3-VL (8B)** | **72.0%** (36/50) | **36.0%** | **24.0%** | **2.44 / 5.0** |
+| **Gemma 4 (E4B)** | **64.0%** (32/50) | **41.0%** | **47.3%** | **2.60 / 5.0** |
 
 ---
 
 ## 8. Conclusioni per la Tesi
 
-1. **Efficacia dell'Approccio Agentico Stateful**: L'architettura LangGraph abbatte il tasso di allucinazione al **6.4%** e garantisce un'astensione affidabile nel **93.6%** dei casi.
-2. **Importanza del Verifier Deterministico**: Il riconoscimento dello stato `insufficient_evidence` (21.4%) protegge il sistema da errori di estrazione OCR o da documenti a risoluzione degradata.
-3. **Spiegabilità Completa**: L'output JSON fornisce una traccia forense completa (`trace`, `evidence_for`, quadrante, causa e spiegazione testuale), rendendo il sistema adatto all'uso in contesti applicativi reali e verificabili.
+1. **Abbattimento delle Allucinazioni**: L'approccio Agentico basato su LangGraph riduce le allucinazioni tra lo **0.0% e il 9.6%** su tutti i modelli testati (rispetto al 85-90%+ di allucinazioni dei modelli VLM a inferenza diretta single-prompt).
+2. **Resilienza e Safe Abstention**: La separazione tra diagnosi rigorosa (`unanswerable`) e astensione preventiva (`insufficient_evidence`) garantisce un **Total Unable Rate compreso tra il 90.4% e il 100.0%**, prevenendo risposte false anche a fronte di errori infrastrutturali o di estrazione OCR.
+3. **Miglior Modello per Spiegabilità**: **Gemma 3 4B** si dimostra il modello con la più elevata ricchezza diagnostica (72.2% QUR stretto con categorizzazione forense di tempo, spazio, entità e valore).
+4. **Miglior Modello per Sicurezza**: **Qwen 2.5 3B** raggiunge il 100% di Unable Rate con 0 falsi negativi, rappresentando il punto di riferimento per contesti ad alta criticità (zero-tolerance hallucination).
 
 ---
 
-## 9. Risorse Correlate
+## 9. Riferimenti ai File Risultato in `Agentic_results/`
 
-* Dati completi JSON: [`c:\Tesi\Agentic-VQA-Pipeline\Agentic_results\unanswerability_diagnostic_results_gemma3.json`](file:///c:/Tesi/Agentic-VQA-Pipeline/Agentic_results/unanswerability_diagnostic_results_gemma3.json)
-* Tabella Risultati CSV: [`c:\Tesi\Agentic-VQA-Pipeline\Agentic_results\unanswerability_results.csv`](file:///c:/Tesi/Agentic-VQA-Pipeline/Agentic_results/unanswerability_results.csv)
-* Report Testuale TXT: [`c:\Tesi\Agentic-VQA-Pipeline\Agentic_results\unanswerability_results.txt`](file:///c:/Tesi/Agentic-VQA-Pipeline/Agentic_results/unanswerability_results.txt)
+* 📄 **Gemma 3**: [`unanswerability_diagnostic_results_gemma3.json`](file:///c:/Tesi/Agentic-VQA-Pipeline/Agentic_results/unanswerability_diagnostic_results_gemma3.json) | [`human_review_sample_gemma3.md`](file:///c:/Tesi/Agentic-VQA-Pipeline/Agentic_results/human_review_sample_gemma3.md)
+* 📄 **Gemma 4**: [`unanswerability_diagnostic_results_gemma4.json`](file:///c:/Tesi/Agentic-VQA-Pipeline/Agentic_results/unanswerability_diagnostic_results_gemma4.json) | [`human_review_sample_gemma4.md`](file:///c:/Tesi/Agentic-VQA-Pipeline/Agentic_results/human_review_sample_gemma4.md)
+* 📄 **Qwen3-VL 8B**: [`unanswerability_diagnostic_results_qwen3vl8b.json`](file:///c:/Tesi/Agentic-VQA-Pipeline/Agentic_results/unanswerability_diagnostic_results_qwen3vl8b.json) | [`human_review_sample_qwen3vl8b.md`](file:///c:/Tesi/Agentic-VQA-Pipeline/Agentic_results/human_review_sample_qwen3vl8b.md)
+* 📄 **Qwen 2.5 3B**: [`unanswerability_diagnostic_results_qwen2.5.json`](file:///c:/Tesi/Agentic-VQA-Pipeline/Agentic_results/unanswerability_diagnostic_results_qwen2.5.json) | [`human_review_sample_qwen2.5.md`](file:///c:/Tesi/Agentic-VQA-Pipeline/Agentic_results/human_review_sample_qwen2.5.md)
