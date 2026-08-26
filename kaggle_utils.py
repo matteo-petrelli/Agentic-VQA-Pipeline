@@ -213,7 +213,7 @@ def start_ollama(
             "format": "json",
             "stream": False,
             "keep_alive": -1,
-            "options": {"temperature": 0, "num_predict": 32},
+            "options": {"temperature": 0, "num_predict": 32, "num_ctx": 8192},
         },
         timeout=600,
     )

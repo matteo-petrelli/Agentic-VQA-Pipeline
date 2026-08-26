@@ -6,7 +6,8 @@ VLM_BACKEND = "ollama"
 OLLAMA_VLM = "qwen2.5vl:3b"
 OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_TIMEOUT = 300
-VLM_MAX_TOKENS = 1024
+VLM_NUM_CTX = 8192      # Context window size (input prompt + image patch tokens)
+VLM_MAX_TOKENS = 1536   # Generation token limit (output response)
 AGENT_TEMPERATURE = 0.0
 
 # HuggingFace transformers backend (used when VLM_BACKEND = "transformers")

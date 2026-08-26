@@ -263,6 +263,7 @@ class DocumentEngine:
                     config.AGENT_TEMPERATURE if temperature is None else temperature
                 ),
                 "num_predict": config.VLM_MAX_TOKENS,
+                "num_ctx": getattr(config, "VLM_NUM_CTX", 8192),
             },
         }
         if json_mode:
