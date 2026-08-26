@@ -109,6 +109,22 @@ class DocumentEngine:
 
         from transformers import AutoConfig, AutoModelForCausalLM, AutoProcessor
 
+        # ----- Compatibility shim for transformers >= 4.45 -----
+        # Phi-3.5-Vision's custom modeling code references
+        # DynamicCache.seen_tokens, which was renamed to
+        # get_seq_length() in newer transformers versions.
+        try:
+            from transformers.cache_utils import DynamicCache
+
+            if not hasattr(DynamicCache, "seen_tokens"):
+                DynamicCache.seen_tokens = property(
+                    lambda self: self.get_seq_length()
+                )
+                print("Applied DynamicCache.seen_tokens compatibility patch.")
+        except ImportError:
+            pass
+        # -------------------------------------------------------
+
         dtype_map = {
             "float16": self.torch.float16,
             "bfloat16": self.torch.bfloat16,
