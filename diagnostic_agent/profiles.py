@@ -115,6 +115,31 @@ PROMPT_PROFILES: dict[str, PromptProfile] = {
         verifier_prompt="answerability_verifier_v1",
         metadata={"status": "phi-3.5-vision optimized profile based on metrics_summary.csv"},
     ),
+    "qwen25_focused": PromptProfile(
+        name="qwen25_focused",
+        cause_prompts={
+            # NLP Tag CoT dominates on Qwen 2.5: QUR=0.8235, UR=0.9554 (highest overall)
+            CauseCode.ENTITY_MISSING: "nlp_tag_cot",
+            CauseCode.ENTITY_MISMATCH: "nlp_tag_cot",
+            CauseCode.VALUE_MISMATCH: "nlp_tag_cot",
+            CauseCode.TEMPORAL_MISMATCH: "nlp_tag_cot",
+            CauseCode.RELATION_MISMATCH: "nlp_tag_cot",
+            # NLP List CoT: strong on ambiguous targets & presuppositions (QUR=0.5187, UR=0.8333)
+            CauseCode.AMBIGUOUS_TARGET: "nlp_list_cot",
+            CauseCode.UNSUPPORTED_PRESUPPOSITION: "nlp_list_cot",
+            # Layout v4: best for geometric & structural causes (QUR=0.4332, UR=0.6985)
+            CauseCode.SPATIAL_MISMATCH: "layout_v4",
+            CauseCode.DOCUMENT_ELEMENT_MISMATCH: "layout_v4",
+            CauseCode.EVIDENCE_MISSING: "layout_v4",
+            # DocEl CoT v4 for answer type consistency
+            CauseCode.ANSWER_TYPE_MISMATCH: "docel_cot_v4",
+            CauseCode.EXTRACTION_FAILURE: "answerability_verifier_v1",
+        },
+        # NLP Tag CoT as answerer: highest QUR (82.35%) and UR (95.54%) for Qwen 2.5
+        answerer_prompt="nlp_tag_cot",
+        verifier_prompt="answerability_verifier_v1",
+        metadata={"status": "qwen2.5-vl:3b optimized profile based on metrics_summary.csv"},
+    ),
 }
 
 
@@ -127,6 +152,9 @@ MODEL_PROFILE_MAP: dict[str, str] = {
     "gemma-4": "gemma4_focused",
     "qwen3-vl": "qwen3vl_focused",
     "qwen3vl": "qwen3vl_focused",
+    "qwen2.5": "qwen25_focused",
+    "qwen2-5": "qwen25_focused",
+    "qwen25": "qwen25_focused",
     "phi3.5": "phi35_focused",
     "phi-3.5": "phi35_focused",
     "phi35": "phi35_focused",
