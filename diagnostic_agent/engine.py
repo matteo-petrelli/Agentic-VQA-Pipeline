@@ -278,6 +278,7 @@ class DocumentEngine:
             "model": config.OLLAMA_VLM,
             "messages": [message],
             "stream": False,
+            "think": False,
             "options": {
                 "temperature": (
                     config.AGENT_TEMPERATURE if temperature is None else temperature

@@ -8,7 +8,8 @@ from diagnostic_agent.schemas import CauseCode, CauseStatus, Confidence
 
 
 def parse_json_object(response: str) -> dict[str, Any]:
-    cleaned = re.sub(r"```(?:json)?|```", "", str(response)).strip()
+    cleaned = re.sub(r"<think>.*?</think>", "", str(response), flags=re.DOTALL)
+    cleaned = re.sub(r"```(?:json)?|```", "", cleaned).strip()
     try:
         value = json.loads(cleaned)
         return value if isinstance(value, dict) else {}

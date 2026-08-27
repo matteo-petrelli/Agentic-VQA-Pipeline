@@ -5,7 +5,9 @@
  * 2. Incolla questo codice nel file 'Codice.gs' sostituendo tutto.
  * 3. Clicca su 'Esegui' (Run). Autorizza l'accesso quando richiesto.
  * 4. Controlla il log di esecuzione per ottenere il link al Form generato!
- */
+https://docs.google.com/forms/d/1RddAtrtAShE9JroOXy-W1aRaNtxDpPmabVt5R-TaYJo/edit
+https://docs.google.com/forms/d/e/1FAIpQLSehpcEmunHFVCYCkDgDbCtqOXpeAbzW25pML1HK6KfXHNiFwg/viewform 
+*/
 
 function createHumanReviewForm() {
   var formTitle = "📋 Human Review: Unanswerability Diagnostic Agent (Gemma 3 (4B))";
