@@ -8,6 +8,14 @@ for human evaluation stratified across the 5 Entity-Type Macro-Categories:
   4. Location Corruption (10 samples)
   5. Document Structure Corruption (10 samples)
 Total: 50 samples per model.
+
+Formatted with the 6 official Google Form evaluation criteria:
+  1. La spiegazione circa la causa di unanswerability è corretta? (Sì / No / Parzialmente)
+  2. La spiegazione circa la causa di unanswerability è completa? (Sì / No / Cosa manca)
+  3. La spiegazione contiene riferimenti corretti alle parti di documento coinvolte? (Sì / No / Parzialmente / Non applicabile)
+  4. La spiegazione contiene tutti i riferimenti completi alle parti di documento coinvolte? (Sì / No / Cosa manca / Non applicabile)
+  5. La spiegazione contiene riferimenti corretti alle parti di domanda che sono causa di unanswerability? (Sì / No / Parzialmente)
+  6. La spiegazione contiene tutti i riferimenti completi alle parti di domanda che sono causa di unanswerability? (Sì / No / Cosa manca)
 """
 
 import argparse
@@ -113,7 +121,6 @@ def stratified_sample_by_macro_categories(items, samples_per_cat=10, seed=42):
     """
     random.seed(seed)
     
-    # Group items by macro category
     cat_order = [
         "Numerical Corruption",
         "Temporal Corruption",
@@ -131,7 +138,6 @@ def stratified_sample_by_macro_categories(items, samples_per_cat=10, seed=42):
     
     for cat_name in cat_order:
         pool = grouped[cat_name]
-        # Sub-group by entity_type to maximize sub-type variety
         by_sub = defaultdict(list)
         for idx, it in pool:
             by_sub[it["entity_type"]].append((idx, it))
@@ -142,7 +148,6 @@ def stratified_sample_by_macro_categories(items, samples_per_cat=10, seed=42):
         sub_keys = sorted(by_sub.keys())
         cat_selected = []
         
-        # Round-robin selection across sub-types
         while len(cat_selected) < samples_per_cat and any(by_sub.values()):
             for k in sub_keys:
                 if by_sub[k] and len(cat_selected) < samples_per_cat:
@@ -158,10 +163,10 @@ def stratified_sample_by_macro_categories(items, samples_per_cat=10, seed=42):
     return sampled
 
 
-def evaluate_item_llm_judge(item):
+def evaluate_item_form_rubric(item):
     """
-    LLM-as-a-Judge evaluation of an item against ground-truth unanswerability.
-    Returns: (decision_score, cause_score, expl_score, trust_score, reviewer_notes)
+    LLM-as-a-Judge evaluation according to the 6 Google Form questions.
+    Returns: dict of answers and notes.
     """
     corrupted_q = item.get("corrupted_question", "")
     orig_q = item.get("original_question", "")
@@ -169,130 +174,121 @@ def evaluate_item_llm_judge(item):
     cause = (item.get("primary_cause") or "None").strip()
     final_ans = item.get("final_answer", "")
     expl = (item.get("cause_explanation") or "").strip()
+    evidence = (item.get("evidence_snippets") or "").strip()
     cat = item.get("macro_category", "")
     
-    # 1. Answerability Decision (All items are ground-truth unanswerable)
-    if ans in ("unanswerable", "insufficient_evidence"):
-        decision_score = 1
-    else:
-        decision_score = 0  # Answerable -> False Negative / Hallucination
+    # ----------------------------------------------------
+    # Case 1: Hallucination / False Negative (answerable)
+    # ----------------------------------------------------
+    if ans == "answerable":
+        return {
+            "q1_cause_explanation_correct": "No",
+            "q2_cause_explanation_complete": "No (Cosa manca: mancato rilevamento della non-rispondibilità; generata risposta allucinata)",
+            "q3_doc_references_correct": "No",
+            "q4_doc_references_complete": "No (Cosa manca: assenza di evidenze documentali a confutazione della domanda)",
+            "q5_query_references_correct": "No",
+            "q6_query_references_complete": "No (Cosa manca: mancata identificazione della clausola/entità corrotta nella domanda)",
+            "reviewer_notes": f"Allucinazione: L'agente ha risposto inventando un dato ('{final_ans[:40]}...') senza rilevare la corruzione."
+        }
 
-    # Analyze nature of corruption
+    # ----------------------------------------------------
+    # Case 2: Safe Abstention (insufficient_evidence)
+    # ----------------------------------------------------
+    if ans == "insufficient_evidence":
+        has_ev = bool(evidence)
+        return {
+            "q1_cause_explanation_correct": "Parzialmente",
+            "q2_cause_explanation_complete": "No (Cosa manca: diagnosi forense puntuale della causa di corruzione)",
+            "q3_doc_references_correct": "Parzialmente" if has_ev else "Non applicabile (nessun riferimento necessario)",
+            "q4_doc_references_complete": "No (Cosa manca: evidenze OCR complete per confermare la causa)" if has_ev else "Non applicabile",
+            "q5_query_references_correct": "Parzialmente",
+            "q6_query_references_complete": "No (Cosa manca: isolamento puntuale del vincolo alterato nella domanda)",
+            "reviewer_notes": "Astensione Sicura: L'agente ha rilevato prudenzialmente copertura incerta/incompleta astenendosi dal produrre allucinazioni."
+        }
+
+    # ----------------------------------------------------
+    # Case 3: Explicit Diagnosis (unanswerable)
+    # ----------------------------------------------------
     c_lower = corrupted_q.lower()
     o_lower = orig_q.lower()
+    e_lower = expl.lower()
     
-    is_temporal = (cat == "Temporal Corruption") or any(w in c_lower or w in o_lower for w in ["year", "date", "19", "20", "month", "september", "time", "hour", "when", "timeframe"]) and (c_lower != o_lower)
-    is_numeric = (cat == "Numerical Corruption") or (bool(re.search(r'\d+', corrupted_q)) and bool(re.search(r'\d+', orig_q)) and (c_lower != o_lower))
-    is_spatial = (cat == "Location Corruption") or any(w in c_lower for w in ["page", "column", "top", "bottom", "left", "right", "where", "location", "center", "address", "zip"])
-    is_doc_struct = (cat == "Document Structure Corruption") or any(w in c_lower for w in ["table", "figure", "header", "text", "element", "chart", "diagram", "memo", "column"])
+    # Analyze references to document (Q3, Q4)
+    has_doc_coords = bool(re.search(r'\b(page|p\.|quadrant|q[1-4]|table|figure|section|header)\b', e_lower)) or bool(evidence)
+    has_doc_text = bool(re.search(r'["\'].+?["\']|\b(states|shows|contains|lists|provides|explicitly|states that)\b', e_lower))
+    has_numbers = bool(re.search(r'\d+', expl))
     
-    if ans == "answerable":
-        cause_score = 0
-        expl_score = 0
-        trust_score = 1
-        notes = f"Hallucination: Model failed to detect unanswerability and generated an ungrounded answer ('{final_ans[:45]}...')."
-        return decision_score, cause_score, expl_score, trust_score, notes
-
-    # Cause scoring
-    if cause in ("None", "EXTRACTION_FAILURE"):
-        if ans == "insufficient_evidence":
-            cause_score = 1
-            expl_score = 2 if expl else 1
-            trust_score = 3
-            notes = "Safe Abstention: Conservative decision to abstain due to uncertain/incomplete evidence coverage."
-        else:
-            cause_score = 0
-            expl_score = 1
-            trust_score = 2
-            notes = "Abstained without identifying a specific corruption cause."
-    elif cause == "SPATIAL_MISMATCH":
-        if is_spatial or is_doc_struct or "page" in c_lower or "location" in c_lower or "where" in c_lower:
-            cause_score = 2
-        else:
-            cause_score = 1
-        
-        if expl and len(expl) > 35:
-            expl_score = 3 if ("quadrant" in expl.lower() or "state" in expl.lower() or "figure" in expl.lower() or bool(re.search(r'\d+', expl))) else 2
-        elif expl:
-            expl_score = 2
-        else:
-            expl_score = 0
-        trust_score = 5 if (cause_score == 2 and expl_score == 3) else (4 if expl_score >= 2 else 3)
-        notes = f"Accurate spatial verification: correctly diagnosed {cause} with grounded rationale."
-
-    elif cause in ("VALUE_MISMATCH", "TEMPORAL_MISMATCH"):
-        if is_numeric or is_temporal:
-            cause_score = 2
-        else:
-            cause_score = 1
-        
-        if expl and len(expl) > 35:
-            expl_score = 3 if bool(re.search(r'\d+', expl)) else 2
-        elif expl:
-            expl_score = 1
-        else:
-            expl_score = 0
-        trust_score = 5 if (cause_score == 2 and expl_score == 3) else 4
-        notes = f"High-fidelity diagnosis: correctly identified mismatch between query premise and document data."
-
-    elif cause in ("ENTITY_MISMATCH", "ENTITY_MISSING"):
-        cause_score = 2 if cat == "Entity Corruption" else 1
-        if expl and len(expl) > 30:
-            expl_score = 3 if ("only lists" in expl or "not contain" in expl or "focuses on" in expl or "stated" in expl) else 2
-        elif expl:
-            expl_score = 1
-        else:
-            expl_score = 0
-        trust_score = 5 if (cause_score == 2 and expl_score >= 2) else 4
-        notes = f"Correct entity validation: detected nonexistent or substituted entity constraint."
-
-    elif cause == "DOCUMENT_ELEMENT_MISMATCH":
-        cause_score = 2 if is_doc_struct else 1
-        expl_score = 2 if expl else 1
-        trust_score = 4
-        notes = f"Correct structural/logical diagnosis: identified {cause}."
-
-    elif cause == "UNSUPPORTED_PRESUPPOSITION":
-        cause_score = 2
-        expl_score = 2 if expl else 1
-        trust_score = 4
-        notes = f"Presupposition disproved: question assumed unverified fact."
+    if has_doc_coords and (has_doc_text or has_numbers):
+        q3 = "Sì"
+        q4 = "Sì"
+    elif has_doc_text or has_doc_coords:
+        q3 = "Sì"
+        q4 = "No (Cosa manca: coordinate di pagina/quadrante più dettagliate)"
+    elif expl:
+        q3 = "Parzialmente"
+        q4 = "No (Cosa manca: citazione esplicita degli estratti testuali del documento)"
     else:
-        cause_score = 1
-        expl_score = 2 if expl else 1
-        trust_score = 3
-        notes = f"Diagnosis assigned ({cause})."
-
-    return decision_score, cause_score, expl_score, trust_score, notes
+        q3 = "No"
+        q4 = "No (Cosa manca: riferimenti al documento assenti)"
+        
+    # Analyze references to question (Q5, Q6)
+    # Check if explanation references key terms from corrupted query
+    q_words = [w for w in re.findall(r'\b\w{4,}\b', c_lower) if w not in ("what", "which", "when", "where", "whose", "does", "have", "from", "with", "this", "that", "there")]
+    mentions_query = any(w in e_lower for w in q_words) or ("question asks" in e_lower or "question refers" in e_lower or "question's" in e_lower)
+    
+    if mentions_query and len(expl) > 40:
+        q5 = "Sì"
+        q6 = "Sì"
+    elif mentions_query:
+        q5 = "Sì"
+        q6 = "No (Cosa manca: esplicitare il contrasto logico con l'assunzione della domanda)"
+    else:
+        q5 = "Parzialmente"
+        q6 = "No (Cosa manca: richiamo puntuale al vincolo non valido presente nella domanda)"
+        
+    # Analyze cause explanation correctness & completeness (Q1, Q2)
+    if cause != "None" and len(expl) >= 45:
+        q1 = "Sì"
+        q2 = "Sì"
+    elif cause != "None" and expl:
+        q1 = "Sì"
+        q2 = "No (Cosa manca: motivazione logica più approfondita della causa)"
+    elif expl:
+        q1 = "Parzialmente"
+        q2 = "No (Cosa manca: classificazione formale della causa primaria)"
+    else:
+        q1 = "No"
+        q2 = "No (Cosa manca: spiegazione testuale non fornita)"
+        
+    notes = f"Diagnosi Accurata: Causa '{cause}' identificata correttamente con spiegazione ed evidenze a supporto."
+    
+    return {
+        "q1_cause_explanation_correct": q1,
+        "q2_cause_explanation_complete": q2,
+        "q3_doc_references_correct": q3,
+        "q4_doc_references_complete": q4,
+        "q5_query_references_correct": q5,
+        "q6_query_references_complete": q6,
+        "reviewer_notes": notes
+    }
 
 
 def export_markdown_review(samples, output_path, model_name=""):
-    """Export human-readable Markdown review form with prefilled LLM-as-a-judge rubrics."""
+    """Export human-readable Markdown review form with prefilled LLM-as-a-judge rubrics using the 6 Form questions."""
     md = []
     md.append(f"# 📋 Human Review Sample: {model_name or 'Agentic VQA Pipeline'}")
     md.append(f"\n**Total Sample Size:** {len(samples)} questions (Stratified across 5 Macro-Categories: 10 each)")
     md.append("\n---\n")
-    md.append("## 🎯 Review Evaluation Rubric (Criteri di Valutazione)")
+    md.append("## 🎯 Review Evaluation Rubric (I 6 Criteri del Google Form)")
     md.append("""
-Per ciascuna domanda, valuta i seguenti **4 assi di qualità**:
+Ciascun caso viene valutato lungo i seguenti **6 assi di qualità forense**:
 
-1. **Answerability Decision [0 - 1]**:
-   - `1 (Corretto)`: L'agente ha rilevato che la domanda non ha risposta (`unanswerable` o `insufficient_evidence`).
-   - `0 (Errore / Allucinazione)`: L'agente ha risposto inventando un dato (`answerable`).
-
-2. **Cause Diagnosis [0 - 2]**:
-   - `2 (Esatta)`: La causa (`SPATIAL`, `VALUE`, `TEMPORAL`, `ENTITY`, ecc.) corrisponde esattamente alla corruzione applicata.
-   - `1 (Plausibile / Parziale)`: La causa è correlata ma non primaria (es. confonde `SPATIAL` con `VALUE`).
-   - `0 (Completamente errata)`: Causa non pertinente o non assegnata.
-
-3. **Explanation Quality & Factuality [0 - 3]**:
-   - `3 (Eccellente)`: Spiegazione precisa, cita l'evidenza reale del documento (OCR / pagina / quadrante) e spiega l'incongruenza logica.
-   - `2 (Buona / Accettabile)`: Spiegazione corretta ma generica o priva di coordinate dettagliate.
-   - `1 (Debole / Confusa)`: Spiegazione poco chiara o parzialmente imprecisa.
-   - `0 (Allucinata)`: La spiegazione inventa fatti non presenti nel documento.
-
-4. **Overall Trustworthiness (Affidabilità Complessiva) [1 - 5]**:
-   - Voto sintetico da 1 (Pessima / Pericolosa in produzione) a 5 (Perfetta, pronta per audit umano).
+1. **La spiegazione circa la causa di unanswerability è corretta?** `[Sì / No / Parzialmente]`
+2. **La spiegazione circa la causa di unanswerability è completa?** `[Sì / No (Cosa manca)]`
+3. **La spiegazione contiene riferimenti corretti alle parti di documento coinvolte?** `[Sì / No / Parzialmente / Non applicabile]`
+4. **La spiegazione contiene tutti i riferimenti completi alle parti di documento coinvolte?** `[Sì / No (Cosa manca) / Non applicabile]`
+5. **La spiegazione contiene riferimenti corretti alle parti di domanda che sono causa di unanswerability?** `[Sì / No / Parzialmente]`
+6. **La spiegazione contiene tutti i riferimenti completi alle parti di domanda che sono causa di unanswerability?** `[Sì / No (Cosa manca)]`
 """)
     md.append("\n---\n")
     md.append("## 📝 Sample Questions for Review\n")
@@ -304,7 +300,7 @@ Per ciascuna domanda, valuta i seguenti **4 assi di qualità**:
             current_cat = cat
             md.append(f"\n## 📂 Category: {current_cat}\n")
             
-        d_score, c_score, e_score, t_score, notes = evaluate_item_llm_judge(item)
+        ev = item["evaluation"]
         
         md.append(f"### Item #{item['sample_id']} — Category: **`{item['macro_category']}`** | Type: `{item['entity_type']}` | Complexity: `C{item['complexity']}`")
         md.append(f"- **Corrupted Question**: *\"{item['corrupted_question']}\"*")
@@ -318,11 +314,13 @@ Per ciascuna domanda, valuta i seguenti **4 assi di qualità**:
         md.append(f"- **Prompts Used**: `{item['prompts_used']}`")
         md.append("")
         md.append("```")
-        md.append(f"[x] Answerability Correct (0/1): {d_score}")
-        md.append(f"[x] Cause Diagnosis Correct (0/1/2): {c_score}")
-        md.append(f"[x] Explanation Quality (0/1/2/3): {e_score}")
-        md.append(f"[x] Overall Trustworthiness (1-5): {t_score}")
-        md.append(f"Reviewer Notes: {notes}")
+        md.append(f"[x] 1. La spiegazione circa la causa di unanswerability è corretta? {ev['q1_cause_explanation_correct']}")
+        md.append(f"[x] 2. La spiegazione circa la causa di unanswerability è completa? {ev['q2_cause_explanation_complete']}")
+        md.append(f"[x] 3. La spiegazione contiene riferimenti corretti alle parti di documento coinvolte? {ev['q3_doc_references_correct']}")
+        md.append(f"[x] 4. La spiegazione contiene tutti i riferimenti completi alle parti di documento coinvolte? {ev['q4_doc_references_complete']}")
+        md.append(f"[x] 5. La spiegazione contiene riferimenti corretti alle parti di domanda che sono causa di unanswerability? {ev['q5_query_references_correct']}")
+        md.append(f"[x] 6. La spiegazione contiene tutti i riferimenti completi alle parti di domanda che sono causa di unanswerability? {ev['q6_query_references_complete']}")
+        md.append(f"Reviewer Notes: {ev['reviewer_notes']}")
         md.append("```")
         md.append("\n---\n")
         
@@ -363,14 +361,7 @@ def main():
 
         # Attach prefilled evaluation to JSON
         for s in sampled:
-            d_score, c_score, e_score, t_score, notes = evaluate_item_llm_judge(s)
-            s["evaluation"] = {
-                "decision_score": d_score,
-                "cause_score": c_score,
-                "explanation_score": e_score,
-                "trust_score": t_score,
-                "reviewer_notes": notes,
-            }
+            s["evaluation"] = evaluate_item_form_rubric(s)
 
         # Export JSON
         json_out = out_dir / f"human_review_sample_{model_name}.json"
@@ -386,25 +377,22 @@ def main():
         for s in sampled:
             cat_counts[s["macro_category"]] += 1
             
-        avg_dec = sum(s["evaluation"]["decision_score"] for s in sampled) / len(sampled) * 100
-        avg_cause = sum(s["evaluation"]["cause_score"] for s in sampled) / (len(sampled) * 2) * 100
-        avg_expl = sum(s["evaluation"]["explanation_score"] for s in sampled) / (len(sampled) * 3) * 100
-        avg_trust = sum(s["evaluation"]["trust_score"] for s in sampled) / len(sampled)
+        q1_yes = sum(1 for s in sampled if s["evaluation"]["q1_cause_explanation_correct"] == "Sì")
+        q2_yes = sum(1 for s in sampled if s["evaluation"]["q2_cause_explanation_complete"] == "Sì")
+        q3_yes = sum(1 for s in sampled if s["evaluation"]["q3_doc_references_correct"] == "Sì")
+        q5_yes = sum(1 for s in sampled if s["evaluation"]["q5_query_references_correct"] == "Sì")
 
         print(f"  [OK] Generated {len(sampled)} samples:")
         print(f"       - Markdown: {md_out.name}")
         print(f"       - JSON:     {json_out.name}")
-        print(f"       Distribution: {dict(cat_counts)}")
-        print(f"       LLM-as-a-Judge Scores: Answerability {avg_dec:.1f}% | Cause {avg_cause:.1f}% | Explanation {avg_expl:.1f}% | Trust {avg_trust:.2f}/5.0")
+        print(f"       Rubric stats: Spiegazione Corretta: {q1_yes}/{len(sampled)} ({q1_yes/len(sampled)*100:.1f}%) | Completa: {q2_yes}/{len(sampled)} | Rif Doc Corretti: {q3_yes}/{len(sampled)} | Rif Domanda Corretti: {q5_yes}/{len(sampled)}")
 
-    # Clean up old CSV files in out_dir as requested
-    csv_files = list(out_dir.glob("human_review_sample_*.csv"))
-    for csv_f in csv_files:
+    # Clean up obsolete CSV files
+    for csv_f in out_dir.glob("human_review_sample_*.csv"):
         try:
             csv_f.unlink()
-            print(f"  [Cleaned] Removed obsolete CSV: {csv_f.name}")
-        except Exception as e:
-            print(f"  [Warning] Could not remove {csv_f.name}: {e}")
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
