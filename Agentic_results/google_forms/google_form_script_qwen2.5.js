@@ -15,7 +15,6 @@ function createHumanReviewForm() {
     "Per ciascuna delle 50 domande (stratificate in 5 macro-categorie), valuta la correttezza e la completezza della spiegazione fornita dall'agente.");
   form.setIsQuiz(false);
   form.setProgressBar(true);
-  form.setRequireLogin(false);
 
   // Dati Revisore
   var nameItem = form.addTextItem();

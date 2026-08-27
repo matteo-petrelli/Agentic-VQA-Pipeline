@@ -30,7 +30,6 @@ def generate_google_apps_script(json_path: Path, output_script_path: Path, model
     js_lines.append('    "Per ciascuna delle 50 domande (stratificate in 5 macro-categorie), valuta la correttezza e la completezza della spiegazione fornita dall\'agente.");')
     js_lines.append('  form.setIsQuiz(false);')
     js_lines.append('  form.setProgressBar(true);')
-    js_lines.append('  form.setRequireLogin(false);')
     js_lines.append('')
 
     # Reviewer name question
