@@ -111,8 +111,8 @@ class DocumentEngine:
 
         # ----- Compatibility shim for transformers >= 4.45 -----
         # Phi-3.5-Vision's custom modeling code references
-        # DynamicCache.seen_tokens, which was renamed to
-        # get_seq_length() in newer transformers versions.
+        # DynamicCache.seen_tokens and DynamicCache.get_max_length(),
+        # both removed/renamed in newer transformers versions.
         try:
             from transformers.cache_utils import DynamicCache
 
@@ -121,6 +121,10 @@ class DocumentEngine:
                     lambda self: self.get_seq_length()
                 )
                 print("Applied DynamicCache.seen_tokens compatibility patch.")
+
+            if not hasattr(DynamicCache, "get_max_length"):
+                DynamicCache.get_max_length = lambda self: None
+                print("Applied DynamicCache.get_max_length compatibility patch.")
         except ImportError:
             pass
         # -------------------------------------------------------
