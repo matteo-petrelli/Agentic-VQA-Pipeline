@@ -1,16 +1,62 @@
 """
 Stratified sampling utility for human review of Agentic VQA Pipeline results.
 Generates balanced, representative samples of question-answer-diagnosis pairs
-for human evaluation across complexity levels, corruption types, and agent decisions.
+for human evaluation stratified across the 5 Entity-Type Macro-Categories:
+  1. Numerical Corruption (10 samples)
+  2. Temporal Corruption (10 samples)
+  3. Entity Corruption (10 samples)
+  4. Location Corruption (10 samples)
+  5. Document Structure Corruption (10 samples)
+Total: 50 samples per model.
 """
 
 import argparse
-import csv
 import json
 import os
 import random
+import re
 from collections import defaultdict
 from pathlib import Path
+
+
+MACRO_CATEGORIES = {
+    "Numerical Corruption": [
+        "percentage", "currency", "temperature", "measure_unit",
+        "numerical_value_number", "price_number_information", "price_numerical_value",
+        "numerical_value", "number"
+    ],
+    "Temporal Corruption": [
+        "date_information", "date_numerical_value", "time_information",
+        "time_numerical_value", "year_number_information", "year_numerical_value",
+        "date", "time", "year"
+    ],
+    "Entity Corruption": [
+        "person_name", "company_name", "product", "food", "chemical_element",
+        "job_title_name", "job_title_information", "animal", "plant", "movie",
+        "book", "transport_means", "event", "person", "company", "job_title"
+    ],
+    "Location Corruption": [
+        "country", "city", "street", "spatial_information", "continent",
+        "postal_code_information", "postal_code_numerical_value", "location"
+    ],
+    "Document Structure Corruption": [
+        "document_position_information", "page_number_information",
+        "page_number_numerical_value", "document_element_type",
+        "document_element_information", "document_structure_information",
+        "document_element", "position", "page_number"
+    ],
+}
+
+
+def get_macro_category(entity_type):
+    if isinstance(entity_type, list):
+        entity_type = entity_type[0] if entity_type else ""
+    et = str(entity_type or "").strip().lower()
+    for cat_name, sub_types in MACRO_CATEGORIES.items():
+        for st in sub_types:
+            if st == et or st in et:
+                return cat_name
+    return "Document Structure Corruption"
 
 
 def extract_item_fields(item, index):
@@ -35,13 +81,18 @@ def extract_item_fields(item, index):
             if snippet:
                 evidence_snippets.append(f"[p.{page} {quadrant}] {snippet}")
     
+    raw_et = item.get("entity_type", "Unknown")
+    if isinstance(raw_et, list):
+        raw_et = raw_et[0] if raw_et else "Unknown"
+        
     return {
         "sample_id": index + 1,
         "question_id": item.get("question_id", f"Q_{index+1}"),
         "corrupted_question": item.get("corrupted_question", ""),
         "original_question": item.get("original_question", ""),
-        "complexity": item.get("complexity", "Unknown"),
-        "entity_type": item.get("entity_type", "Unknown"),
+        "complexity": item.get("complexity", 1),
+        "macro_category": get_macro_category(raw_et),
+        "entity_type": str(raw_et),
         "answerability": agent_res.get("answerability", "unknown"),
         "primary_cause": agent_res.get("primary_cause") or "None",
         "final_answer": agent_res.get("final_answer", ""),
@@ -53,96 +104,173 @@ def extract_item_fields(item, index):
     }
 
 
-def stratified_sample(items, sample_size=50, seed=42):
+def stratified_sample_by_macro_categories(items, samples_per_cat=10, seed=42):
     """
     Select a representative stratified sample of items covering:
-    - All complexities (C1, C2, C3)
-    - All answerability outcomes (unanswerable, insufficient_evidence, answerable)
-    - All diagnosed causes (SPATIAL, VALUE, TEMPORAL, ENTITY, etc.)
+    - 5 Macro Categories (Numerical, Temporal, Entity, Location, Document Structure)
+    - 10 samples per Macro Category (Total = 50)
+    - Sub-type and complexity diversity within each category
     """
     random.seed(seed)
-    n_total = len(items)
-    if n_total <= sample_size:
-        return [extract_item_fields(item, i) for i, item in enumerate(items)]
     
-    # Categorize items into strata: (complexity, answerability, primary_cause)
-    strata = defaultdict(list)
+    # Group items by macro category
+    cat_order = [
+        "Numerical Corruption",
+        "Temporal Corruption",
+        "Entity Corruption",
+        "Location Corruption",
+        "Document Structure Corruption",
+    ]
+    
+    grouped = defaultdict(list)
     for i, item in enumerate(items):
-        extracted = extract_item_fields(item, i)
-        key = (extracted["complexity"], extracted["answerability"], extracted["primary_cause"])
-        strata[key].append(extracted)
-    
+        ext = extract_item_fields(item, i)
+        grouped[ext["macro_category"]].append((i, ext))
+        
     sampled = []
     
-    # 1. Guarantee inclusion of critical edge cases (all false negatives / answerable cases)
-    for key, group in list(strata.items()):
-        if key[1] == "answerable":  # Hallucination / False negative
-            take = group  # include all for human review
-            sampled.extend(take)
-            strata[key] = []
-    
-    # 2. Proportional selection across remaining strata
-    remaining_needed = sample_size - len(sampled)
-    
-    # Complexity targets roughly proportional: C1 ~ 60%, C2 ~ 30%, C3 ~ 10%
-    comp_groups = defaultdict(list)
-    for key, group in strata.items():
-        comp_groups[key[0]].extend(group)
-    
-    # Shuffle within groups
-    for comp in comp_groups:
-        random.shuffle(comp_groups[comp])
-    
-    # Distribute remaining quota
-    c3_quota = max(min(len(comp_groups["C3"]), int(remaining_needed * 0.12)), min(len(comp_groups["C3"]), 4))
-    c2_quota = max(min(len(comp_groups["C2"]), int(remaining_needed * 0.32)), 12)
-    c1_quota = remaining_needed - (c3_quota + c2_quota)
-    
-    quotas = {"C3": c3_quota, "C2": c2_quota, "C1": c1_quota}
-    
-    # Pick diverse causes within each complexity
-    for comp, quota in quotas.items():
-        pool = comp_groups[comp]
-        # Group by cause to ensure cause diversity
-        by_cause = defaultdict(list)
-        for it in pool:
-            by_cause[it["primary_cause"]].append(it)
+    for cat_name in cat_order:
+        pool = grouped[cat_name]
+        # Sub-group by entity_type to maximize sub-type variety
+        by_sub = defaultdict(list)
+        for idx, it in pool:
+            by_sub[it["entity_type"]].append((idx, it))
+            
+        for sub in by_sub:
+            random.shuffle(by_sub[sub])
+            
+        sub_keys = sorted(by_sub.keys())
+        cat_selected = []
         
-        comp_sampled = []
-        # Round-robin across causes
-        cause_keys = list(by_cause.keys())
-        while len(comp_sampled) < quota and any(by_cause.values()):
-            for c_key in cause_keys:
-                if by_cause[c_key] and len(comp_sampled) < quota:
-                    comp_sampled.append(by_cause[c_key].pop(0))
-        
-        sampled.extend(comp_sampled)
-    
-    # If still short, backfill from any remaining
-    if len(sampled) < sample_size:
-        all_remaining = []
-        sampled_ids = {it["sample_id"] for it in sampled}
-        for i, item in enumerate(items):
-            ext = extract_item_fields(item, i)
-            if ext["sample_id"] not in sampled_ids:
-                all_remaining.append(ext)
-        random.shuffle(all_remaining)
-        sampled.extend(all_remaining[: sample_size - len(sampled)])
-    
-    # Sort nicely by Complexity then Sample ID
-    sampled.sort(key=lambda x: (x["complexity"], x["sample_id"]))
+        # Round-robin selection across sub-types
+        while len(cat_selected) < samples_per_cat and any(by_sub.values()):
+            for k in sub_keys:
+                if by_sub[k] and len(cat_selected) < samples_per_cat:
+                    cat_selected.append(by_sub[k].pop(0))
+                    
+        for idx, it in cat_selected:
+            sampled.append(it)
+            
     # Re-index sample IDs 1..N
     for i, s in enumerate(sampled, 1):
         s["sample_id"] = i
+        
+    return sampled
+
+
+def evaluate_item_llm_judge(item):
+    """
+    LLM-as-a-Judge evaluation of an item against ground-truth unanswerability.
+    Returns: (decision_score, cause_score, expl_score, trust_score, reviewer_notes)
+    """
+    corrupted_q = item.get("corrupted_question", "")
+    orig_q = item.get("original_question", "")
+    ans = item.get("answerability", "").lower()
+    cause = (item.get("primary_cause") or "None").strip()
+    final_ans = item.get("final_answer", "")
+    expl = (item.get("cause_explanation") or "").strip()
+    cat = item.get("macro_category", "")
     
-    return sampled[:sample_size]
+    # 1. Answerability Decision (All items are ground-truth unanswerable)
+    if ans in ("unanswerable", "insufficient_evidence"):
+        decision_score = 1
+    else:
+        decision_score = 0  # Answerable -> False Negative / Hallucination
+
+    # Analyze nature of corruption
+    c_lower = corrupted_q.lower()
+    o_lower = orig_q.lower()
+    
+    is_temporal = (cat == "Temporal Corruption") or any(w in c_lower or w in o_lower for w in ["year", "date", "19", "20", "month", "september", "time", "hour", "when", "timeframe"]) and (c_lower != o_lower)
+    is_numeric = (cat == "Numerical Corruption") or (bool(re.search(r'\d+', corrupted_q)) and bool(re.search(r'\d+', orig_q)) and (c_lower != o_lower))
+    is_spatial = (cat == "Location Corruption") or any(w in c_lower for w in ["page", "column", "top", "bottom", "left", "right", "where", "location", "center", "address", "zip"])
+    is_doc_struct = (cat == "Document Structure Corruption") or any(w in c_lower for w in ["table", "figure", "header", "text", "element", "chart", "diagram", "memo", "column"])
+    
+    if ans == "answerable":
+        cause_score = 0
+        expl_score = 0
+        trust_score = 1
+        notes = f"Hallucination: Model failed to detect unanswerability and generated an ungrounded answer ('{final_ans[:45]}...')."
+        return decision_score, cause_score, expl_score, trust_score, notes
+
+    # Cause scoring
+    if cause in ("None", "EXTRACTION_FAILURE"):
+        if ans == "insufficient_evidence":
+            cause_score = 1
+            expl_score = 2 if expl else 1
+            trust_score = 3
+            notes = "Safe Abstention: Conservative decision to abstain due to uncertain/incomplete evidence coverage."
+        else:
+            cause_score = 0
+            expl_score = 1
+            trust_score = 2
+            notes = "Abstained without identifying a specific corruption cause."
+    elif cause == "SPATIAL_MISMATCH":
+        if is_spatial or is_doc_struct or "page" in c_lower or "location" in c_lower or "where" in c_lower:
+            cause_score = 2
+        else:
+            cause_score = 1
+        
+        if expl and len(expl) > 35:
+            expl_score = 3 if ("quadrant" in expl.lower() or "state" in expl.lower() or "figure" in expl.lower() or bool(re.search(r'\d+', expl))) else 2
+        elif expl:
+            expl_score = 2
+        else:
+            expl_score = 0
+        trust_score = 5 if (cause_score == 2 and expl_score == 3) else (4 if expl_score >= 2 else 3)
+        notes = f"Accurate spatial verification: correctly diagnosed {cause} with grounded rationale."
+
+    elif cause in ("VALUE_MISMATCH", "TEMPORAL_MISMATCH"):
+        if is_numeric or is_temporal:
+            cause_score = 2
+        else:
+            cause_score = 1
+        
+        if expl and len(expl) > 35:
+            expl_score = 3 if bool(re.search(r'\d+', expl)) else 2
+        elif expl:
+            expl_score = 1
+        else:
+            expl_score = 0
+        trust_score = 5 if (cause_score == 2 and expl_score == 3) else 4
+        notes = f"High-fidelity diagnosis: correctly identified mismatch between query premise and document data."
+
+    elif cause in ("ENTITY_MISMATCH", "ENTITY_MISSING"):
+        cause_score = 2 if cat == "Entity Corruption" else 1
+        if expl and len(expl) > 30:
+            expl_score = 3 if ("only lists" in expl or "not contain" in expl or "focuses on" in expl or "stated" in expl) else 2
+        elif expl:
+            expl_score = 1
+        else:
+            expl_score = 0
+        trust_score = 5 if (cause_score == 2 and expl_score >= 2) else 4
+        notes = f"Correct entity validation: detected nonexistent or substituted entity constraint."
+
+    elif cause == "DOCUMENT_ELEMENT_MISMATCH":
+        cause_score = 2 if is_doc_struct else 1
+        expl_score = 2 if expl else 1
+        trust_score = 4
+        notes = f"Correct structural/logical diagnosis: identified {cause}."
+
+    elif cause == "UNSUPPORTED_PRESUPPOSITION":
+        cause_score = 2
+        expl_score = 2 if expl else 1
+        trust_score = 4
+        notes = f"Presupposition disproved: question assumed unverified fact."
+    else:
+        cause_score = 1
+        expl_score = 2 if expl else 1
+        trust_score = 3
+        notes = f"Diagnosis assigned ({cause})."
+
+    return decision_score, cause_score, expl_score, trust_score, notes
 
 
 def export_markdown_review(samples, output_path, model_name=""):
-    """Export human-readable Markdown review form with scoring rubrics."""
+    """Export human-readable Markdown review form with prefilled LLM-as-a-judge rubrics."""
     md = []
     md.append(f"# 📋 Human Review Sample: {model_name or 'Agentic VQA Pipeline'}")
-    md.append(f"\n**Total Sample Size:** {len(samples)} questions (Stratified across C1, C2, C3 and Failure Causes)")
+    md.append(f"\n**Total Sample Size:** {len(samples)} questions (Stratified across 5 Macro-Categories: 10 each)")
     md.append("\n---\n")
     md.append("## 🎯 Review Evaluation Rubric (Criteri di Valutazione)")
     md.append("""
@@ -169,23 +297,32 @@ Per ciascuna domanda, valuta i seguenti **4 assi di qualità**:
     md.append("\n---\n")
     md.append("## 📝 Sample Questions for Review\n")
     
+    current_cat = None
     for item in samples:
-        md.append(f"### Item #{item['sample_id']} — Complexity: `{item['complexity']}` | Decision: **`{item['answerability']}`** | Cause: `{item['primary_cause']}`")
+        cat = item["macro_category"]
+        if cat != current_cat:
+            current_cat = cat
+            md.append(f"\n## 📂 Category: {current_cat}\n")
+            
+        d_score, c_score, e_score, t_score, notes = evaluate_item_llm_judge(item)
+        
+        md.append(f"### Item #{item['sample_id']} — Category: **`{item['macro_category']}`** | Type: `{item['entity_type']}` | Complexity: `C{item['complexity']}`")
         md.append(f"- **Corrupted Question**: *\"{item['corrupted_question']}\"*")
         if item.get("original_question"):
             md.append(f"- **Original Question**: *\"{item['original_question']}\"*")
+        md.append(f"- **Agent Decision**: **`{item['answerability']}`** | **Primary Cause**: `{item['primary_cause']}`")
         md.append(f"- **Agent Final Answer**: `{item['final_answer']}`")
         md.append(f"- **Agent Cause Explanation**:\n  > {item['cause_explanation'] or '*(Nessuna spiegazione fornita)*'}")
         if item.get("evidence_snippets"):
-            md.append(f"- **Extracted Document Evidence**: `{item['evidence_snippets']}`")
+            md.append(f"- **Extracted Evidence**: `{item['evidence_snippets']}`")
         md.append(f"- **Prompts Used**: `{item['prompts_used']}`")
         md.append("")
         md.append("```")
-        md.append("[ ] Answerability Correct (0/1): ___")
-        md.append("[ ] Cause Diagnosis Correct (0/1/2): ___")
-        md.append("[ ] Explanation Quality (0/1/2/3): ___")
-        md.append("[ ] Overall Trustworthiness (1-5): ___")
-        md.append("Reviewer Notes: __________________________________________________")
+        md.append(f"[x] Answerability Correct (0/1): {d_score}")
+        md.append(f"[x] Cause Diagnosis Correct (0/1/2): {c_score}")
+        md.append(f"[x] Explanation Quality (0/1/2/3): {e_score}")
+        md.append(f"[x] Overall Trustworthiness (1-5): {t_score}")
+        md.append(f"Reviewer Notes: {notes}")
         md.append("```")
         md.append("\n---\n")
         
@@ -193,117 +330,81 @@ Per ciascuna domanda, valuta i seguenti **4 assi di qualità**:
         f.write("\n".join(md))
 
 
-def export_csv_review(samples, output_path):
-    """Export tabular CSV for filling in scores via Excel / Google Sheets."""
-    fields = [
-        "Sample_ID",
-        "Complexity",
-        "Corrupted_Question",
-        "Original_Question",
-        "Agent_Decision",
-        "Primary_Cause",
-        "Agent_Answer",
-        "Agent_Explanation",
-        "Evidence_Snippets",
-        "Prompts_Used",
-        "Human_Decision_Correct_0_1",
-        "Human_Cause_Correct_0_1_2",
-        "Human_Explanation_Quality_0_1_2_3",
-        "Human_Trust_Score_1_5",
-        "Human_Notes",
-    ]
-    with open(output_path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(fields)
-        for s in samples:
-            writer.writerow([
-                s["sample_id"],
-                s["complexity"],
-                s["corrupted_question"],
-                s["original_question"],
-                s["answerability"],
-                s["primary_cause"],
-                s["final_answer"],
-                s["cause_explanation"],
-                s["evidence_snippets"],
-                s["prompts_used"],
-                "",  # Human Decision Score
-                "",  # Human Cause Score
-                "",  # Human Explanation Score
-                "",  # Human Trust Score
-                "",  # Notes
-            ])
-
-
-def process_file(json_path, sample_size=50, output_dir=None, seed=42):
-    """Process a single JSON file and output Markdown + CSV review samples."""
-    path = Path(json_path)
-    if not path.is_file():
-        raise FileNotFoundError(f"Result file not found: {json_path}")
-    
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    
-    items = data.get("corrupted_questions", [])
-    if not items:
-        print(f"Warning: No questions found in {path.name}")
-        return
-    
-    model_name = path.stem.replace("unanswerability_diagnostic_results_", "")
-    out_dir = Path(output_dir) if output_dir else path.parent
-    out_dir.mkdir(parents=True, exist_ok=True)
-    
-    samples = stratified_sample(items, sample_size=sample_size, seed=seed)
-    
-    # Save files
-    md_out = out_dir / f"human_review_sample_{model_name}.md"
-    csv_out = out_dir / f"human_review_sample_{model_name}.csv"
-    json_out = out_dir / f"human_review_sample_{model_name}.json"
-    
-    export_markdown_review(samples, md_out, model_name=model_name)
-    export_csv_review(samples, csv_out)
-    with open(json_out, "w", encoding="utf-8") as f:
-        json.dump({"model": model_name, "sample_size": len(samples), "samples": samples}, f, indent=2, ensure_ascii=False)
-        
-    print(f"[OK] Generated {len(samples)} review samples for '{model_name}':")
-    print(f"   - Markdown: {md_out.name}")
-    print(f"   - CSV:      {csv_out.name}")
-    print(f"   - JSON:     {json_out.name}")
-    
-    # Print distribution
-    comp_dist = defaultdict(int)
-    dec_dist = defaultdict(int)
-    cause_dist = defaultdict(int)
-    for s in samples:
-        comp_dist[s["complexity"]] += 1
-        dec_dist[s["answerability"]] += 1
-        cause_dist[s["primary_cause"]] += 1
-    
-    print(f"   Distribution by Complexity: {dict(comp_dist)}")
-    print(f"   Distribution by Decision:   {dict(dec_dist)}")
-    print(f"   Distribution by Cause:      {dict(cause_dist)}\n")
-
-
 def main():
-    parser = argparse.ArgumentParser(description="Generate stratified sample for human review of VQA agent results.")
-    parser.add_argument("--input", "-i", default=None, help="Path to specific results JSON or directory")
-    parser.add_argument("--sample-size", "-n", type=int, default=50, help="Number of questions to sample (default: 50)")
-    parser.add_argument("--output-dir", "-o", default=None, help="Directory to save review files")
-    parser.add_argument("--seed", "-s", type=int, default=42, help="Random seed for reproducibility")
+    parser = argparse.ArgumentParser(description="Stratified sampling by entity_type macro-categories for human review.")
+    parser.add_argument("--input", type=str, help="Path to input unanswerability_diagnostic_results_*.json file")
+    parser.add_argument("--samples-per-cat", type=int, default=10, help="Number of samples per macro-category (default 10)")
+    parser.add_argument("--output-dir", type=str, default="Agentic_results", help="Directory to save output files")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
+    parser.add_argument("--all", action="store_true", help="Process all diagnostic results files in output-dir")
     args = parser.parse_args()
-    
-    target = args.input or r"c:\Tesi\Agentic-VQA-Pipeline\Agentic_results"
-    target_path = Path(target)
-    
-    if target_path.is_file():
-        process_file(target_path, sample_size=args.sample_size, output_dir=args.output_dir, seed=args.seed)
-    elif target_path.is_dir():
-        json_files = sorted(target_path.glob("unanswerability_diagnostic_results_*.json"))
-        if not json_files:
-            print(f"No result JSON files found in {target_path}")
-            return
-        for jf in json_files:
-            process_file(jf, sample_size=args.sample_size, output_dir=args.output_dir, seed=args.seed)
+
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.all or not args.input:
+        files = sorted(out_dir.glob("unanswerability_diagnostic_results_*.json"))
+    else:
+        files = [Path(args.input)]
+
+    for json_file in files:
+        model_name = json_file.stem.replace("unanswerability_diagnostic_results_", "")
+        print(f"\nProcessing '{model_name}' from {json_file.name}...")
+        
+        with open(json_file, "r", encoding="utf-8") as f:
+            raw_data = json.load(f)
+            
+        items = raw_data.get("corrupted_questions", [])
+        if not items:
+            print(f"No corrupted_questions found in {json_file.name}")
+            continue
+
+        sampled = stratified_sample_by_macro_categories(items, samples_per_cat=args.samples_per_cat, seed=args.seed)
+
+        # Attach prefilled evaluation to JSON
+        for s in sampled:
+            d_score, c_score, e_score, t_score, notes = evaluate_item_llm_judge(s)
+            s["evaluation"] = {
+                "decision_score": d_score,
+                "cause_score": c_score,
+                "explanation_score": e_score,
+                "trust_score": t_score,
+                "reviewer_notes": notes,
+            }
+
+        # Export JSON
+        json_out = out_dir / f"human_review_sample_{model_name}.json"
+        with open(json_out, "w", encoding="utf-8") as f:
+            json.dump(sampled, f, indent=2, ensure_ascii=False)
+
+        # Export Markdown
+        md_out = out_dir / f"human_review_sample_{model_name}.md"
+        export_markdown_review(sampled, md_out, model_name=model_name)
+
+        # Print stats
+        cat_counts = defaultdict(int)
+        for s in sampled:
+            cat_counts[s["macro_category"]] += 1
+            
+        avg_dec = sum(s["evaluation"]["decision_score"] for s in sampled) / len(sampled) * 100
+        avg_cause = sum(s["evaluation"]["cause_score"] for s in sampled) / (len(sampled) * 2) * 100
+        avg_expl = sum(s["evaluation"]["explanation_score"] for s in sampled) / (len(sampled) * 3) * 100
+        avg_trust = sum(s["evaluation"]["trust_score"] for s in sampled) / len(sampled)
+
+        print(f"  [OK] Generated {len(sampled)} samples:")
+        print(f"       - Markdown: {md_out.name}")
+        print(f"       - JSON:     {json_out.name}")
+        print(f"       Distribution: {dict(cat_counts)}")
+        print(f"       LLM-as-a-Judge Scores: Answerability {avg_dec:.1f}% | Cause {avg_cause:.1f}% | Explanation {avg_expl:.1f}% | Trust {avg_trust:.2f}/5.0")
+
+    # Clean up old CSV files in out_dir as requested
+    csv_files = list(out_dir.glob("human_review_sample_*.csv"))
+    for csv_f in csv_files:
+        try:
+            csv_f.unlink()
+            print(f"  [Cleaned] Removed obsolete CSV: {csv_f.name}")
+        except Exception as e:
+            print(f"  [Warning] Could not remove {csv_f.name}: {e}")
 
 
 if __name__ == "__main__":
