@@ -27,27 +27,42 @@ def find_project(
     git_ref: str = "main",
     working_dir: Path | None = None,
 ) -> Path:
-    """Locate the project directory on Kaggle or clone it from Git."""
+    """Locate the project directory on Kaggle or clone/pull it from Git."""
     working = working_dir or (Path("/kaggle/working") if Path("/kaggle").exists() else Path.cwd())
     clone_dir = working / "Agentic-VQA-Pipeline"
 
-    explicit = Path(project_source).expanduser() if project_source else None
-    for candidate in (explicit, clone_dir, Path.cwd()):
-        if candidate and (candidate / "agentic_pipeline.py").is_file():
-            return candidate.resolve()
+    # 1. Explicit path given by user
+    if project_source:
+        explicit = Path(project_source).expanduser().resolve()
+        if (explicit / "agentic_pipeline.py").is_file():
+            return explicit
 
+    # 2. Git URL provided: clone or pull latest
+    if git_url:
+        if (clone_dir / ".git").is_dir():
+            print(f"Updating existing clone at {clone_dir} (branch: {git_ref})...")
+            subprocess.run(["git", "-C", str(clone_dir), "pull", "origin", git_ref], check=False)
+            return clone_dir.resolve()
+        elif not (clone_dir / "agentic_pipeline.py").is_file():
+            print(f"Cloning {git_url} (branch: {git_ref}) into {clone_dir}...")
+            subprocess.run(
+                ["git", "clone", "--depth", "1", "--branch", git_ref, git_url, str(clone_dir)],
+                check=True,
+            )
+            return clone_dir.resolve()
+        return clone_dir.resolve()
+
+    # 3. Current working directory
+    if (Path.cwd() / "agentic_pipeline.py").is_file():
+        return Path.cwd().resolve()
+
+    # 4. Fallback to Kaggle Input datasets
     input_root = Path("/kaggle/input")
     if input_root.exists():
         matches = list(input_root.glob("**/agentic_pipeline.py"))
         if matches:
+            print(f"Found project in Kaggle Input dataset: {matches[0].parent}")
             return matches[0].parent.resolve()
-
-    if git_url:
-        subprocess.run(
-            ["git", "clone", "--depth", "1", "--branch", git_ref, git_url, str(clone_dir)],
-            check=True,
-        )
-        return clone_dir.resolve()
 
     raise FileNotFoundError(
         "Project not found. Set PROJECT_SOURCE, add it as a Kaggle Dataset, "
