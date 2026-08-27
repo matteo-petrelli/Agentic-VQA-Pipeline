@@ -84,6 +84,9 @@ def setup_environment(project_dir: Path) -> None:
 
     if str(project_dir) not in sys.path:
         sys.path.insert(0, str(project_dir))
+    scripts_dir = project_dir / "scripts"
+    if scripts_dir.is_dir() and str(scripts_dir) not in sys.path:
+        sys.path.insert(1, str(scripts_dir))
     os.chdir(project_dir)
     print(f"Project: {project_dir}")
     print("Environment ready.")
