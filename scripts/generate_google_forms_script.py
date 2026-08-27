@@ -1,5 +1,12 @@
 import json
+import sys
 from pathlib import Path
+
+# Ensure repo root is on sys.path
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 
 def generate_google_apps_script(json_path: Path, output_script_path: Path, model_title: str = "Gemma 3 (4B)"):
     with open(json_path, "r", encoding="utf-8") as f:
@@ -115,15 +122,17 @@ def generate_google_apps_script(json_path: Path, output_script_path: Path, model
     js_lines.append('  Logger.log("🔗 Link per compilare il modulo: " + form.getPublishedUrl());')
     js_lines.append('}')
 
+    output_script_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_script_path, "w", encoding="utf-8") as f:
         f.write("\n".join(js_lines))
-    print(f"Generated Apps Script: {output_script_path}")
+    print(f"Generated Apps Script: {output_script_path.relative_to(REPO_ROOT)}")
+
 
 if __name__ == "__main__":
-    base_dir = Path(r"c:\Tesi\Agentic-VQA-Pipeline")
-    results_dir = base_dir / "Agentic_results"
+    json_dir = REPO_ROOT / "Agentic_results" / "human_review" / "json"
+    out_dir = REPO_ROOT / "Agentic_results" / "google_forms"
+    out_dir.mkdir(parents=True, exist_ok=True)
     
-    # Generate for all 4 models
     models = {
         "gemma3": "Gemma 3 (4B)",
         "gemma4": "Gemma 4 (E4B)",
@@ -132,7 +141,7 @@ if __name__ == "__main__":
     }
     
     for m_key, m_title in models.items():
-        json_file = results_dir / f"human_review_sample_{m_key}.json"
+        json_file = json_dir / f"human_review_sample_{m_key}.json"
         if json_file.exists():
-            out_js = results_dir / f"google_form_script_{m_key}.js"
+            out_js = out_dir / f"google_form_script_{m_key}.js"
             generate_google_apps_script(json_file, out_js, model_title=m_title)

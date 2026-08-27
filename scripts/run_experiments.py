@@ -1,9 +1,15 @@
 import argparse
 import json
 import os
+import sys
 import traceback
+from pathlib import Path
 
 from tqdm import tqdm
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import config
 from agentic_pipeline import AgenticPipeline

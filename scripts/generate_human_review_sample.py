@@ -23,8 +23,14 @@ import json
 import os
 import random
 import re
+import sys
 from collections import defaultdict
 from pathlib import Path
+
+# Ensure repo root is on sys.path
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 
 MACRO_CATEGORIES = {
@@ -177,9 +183,7 @@ def evaluate_item_form_rubric(item):
     evidence = (item.get("evidence_snippets") or "").strip()
     cat = item.get("macro_category", "")
     
-    # ----------------------------------------------------
     # Case 1: Hallucination / False Negative (answerable)
-    # ----------------------------------------------------
     if ans == "answerable":
         return {
             "q1_cause_explanation_correct": "No",
@@ -191,9 +195,7 @@ def evaluate_item_form_rubric(item):
             "reviewer_notes": f"Allucinazione: L'agente ha risposto inventando un dato ('{final_ans[:40]}...') senza rilevare la corruzione."
         }
 
-    # ----------------------------------------------------
     # Case 2: Safe Abstention (insufficient_evidence)
-    # ----------------------------------------------------
     if ans == "insufficient_evidence":
         has_ev = bool(evidence)
         return {
@@ -206,14 +208,11 @@ def evaluate_item_form_rubric(item):
             "reviewer_notes": "Astensione Sicura: L'agente ha rilevato prudenzialmente copertura incerta/incompleta astenendosi dal produrre allucinazioni."
         }
 
-    # ----------------------------------------------------
     # Case 3: Explicit Diagnosis (unanswerable)
-    # ----------------------------------------------------
     c_lower = corrupted_q.lower()
     o_lower = orig_q.lower()
     e_lower = expl.lower()
     
-    # Analyze references to document (Q3, Q4)
     has_doc_coords = bool(re.search(r'\b(page|p\.|quadrant|q[1-4]|table|figure|section|header)\b', e_lower)) or bool(evidence)
     has_doc_text = bool(re.search(r'["\'].+?["\']|\b(states|shows|contains|lists|provides|explicitly|states that)\b', e_lower))
     has_numbers = bool(re.search(r'\d+', expl))
@@ -231,8 +230,6 @@ def evaluate_item_form_rubric(item):
         q3 = "No"
         q4 = "No (Cosa manca: riferimenti al documento assenti)"
         
-    # Analyze references to question (Q5, Q6)
-    # Check if explanation references key terms from corrupted query
     q_words = [w for w in re.findall(r'\b\w{4,}\b', c_lower) if w not in ("what", "which", "when", "where", "whose", "does", "have", "from", "with", "this", "that", "there")]
     mentions_query = any(w in e_lower for w in q_words) or ("question asks" in e_lower or "question refers" in e_lower or "question's" in e_lower)
     
@@ -246,7 +243,6 @@ def evaluate_item_form_rubric(item):
         q5 = "Parzialmente"
         q6 = "No (Cosa manca: richiamo puntuale al vincolo non valido presente nella domanda)"
         
-    # Analyze cause explanation correctness & completeness (Q1, Q2)
     if cause != "None" and len(expl) >= 45:
         q1 = "Sì"
         q2 = "Sì"
@@ -331,19 +327,27 @@ Ciascun caso viene valutato lungo i seguenti **6 assi di qualità forense**:
 def main():
     parser = argparse.ArgumentParser(description="Stratified sampling by entity_type macro-categories for human review.")
     parser.add_argument("--input", type=str, help="Path to input unanswerability_diagnostic_results_*.json file")
+    parser.add_argument("--raw-dir", type=str, default=str(REPO_ROOT / "Agentic_results" / "raw"), help="Directory with raw diagnostic JSON files")
     parser.add_argument("--samples-per-cat", type=int, default=10, help="Number of samples per macro-category (default 10)")
-    parser.add_argument("--output-dir", type=str, default="Agentic_results", help="Directory to save output files")
+    parser.add_argument("--output-base", type=str, default=str(REPO_ROOT / "Agentic_results" / "human_review"), help="Base output directory for human review")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
-    parser.add_argument("--all", action="store_true", help="Process all diagnostic results files in output-dir")
+    parser.add_argument("--all", action="store_true", help="Process all diagnostic results files in raw-dir")
     args = parser.parse_args()
 
-    out_dir = Path(args.output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    raw_dir = Path(args.raw_dir)
+    md_dir = Path(args.output_base) / "md"
+    json_dir = Path(args.output_base) / "json"
+    md_dir.mkdir(parents=True, exist_ok=True)
+    json_dir.mkdir(parents=True, exist_ok=True)
 
     if args.all or not args.input:
-        files = sorted(out_dir.glob("unanswerability_diagnostic_results_*.json"))
+        files = sorted(raw_dir.glob("unanswerability_diagnostic_results_*.json"))
     else:
         files = [Path(args.input)]
+
+    if not files:
+        print(f"No unanswerability_diagnostic_results_*.json files found in {raw_dir}")
+        return
 
     for json_file in files:
         model_name = json_file.stem.replace("unanswerability_diagnostic_results_", "")
@@ -364,35 +368,23 @@ def main():
             s["evaluation"] = evaluate_item_form_rubric(s)
 
         # Export JSON
-        json_out = out_dir / f"human_review_sample_{model_name}.json"
+        json_out = json_dir / f"human_review_sample_{model_name}.json"
         with open(json_out, "w", encoding="utf-8") as f:
             json.dump(sampled, f, indent=2, ensure_ascii=False)
 
         # Export Markdown
-        md_out = out_dir / f"human_review_sample_{model_name}.md"
+        md_out = md_dir / f"human_review_sample_{model_name}.md"
         export_markdown_review(sampled, md_out, model_name=model_name)
 
-        # Print stats
-        cat_counts = defaultdict(int)
-        for s in sampled:
-            cat_counts[s["macro_category"]] += 1
-            
         q1_yes = sum(1 for s in sampled if s["evaluation"]["q1_cause_explanation_correct"] == "Sì")
         q2_yes = sum(1 for s in sampled if s["evaluation"]["q2_cause_explanation_complete"] == "Sì")
         q3_yes = sum(1 for s in sampled if s["evaluation"]["q3_doc_references_correct"] == "Sì")
         q5_yes = sum(1 for s in sampled if s["evaluation"]["q5_query_references_correct"] == "Sì")
 
         print(f"  [OK] Generated {len(sampled)} samples:")
-        print(f"       - Markdown: {md_out.name}")
-        print(f"       - JSON:     {json_out.name}")
+        print(f"       - Markdown: {md_out.relative_to(REPO_ROOT)}")
+        print(f"       - JSON:     {json_out.relative_to(REPO_ROOT)}")
         print(f"       Rubric stats: Spiegazione Corretta: {q1_yes}/{len(sampled)} ({q1_yes/len(sampled)*100:.1f}%) | Completa: {q2_yes}/{len(sampled)} | Rif Doc Corretti: {q3_yes}/{len(sampled)} | Rif Domanda Corretti: {q5_yes}/{len(sampled)}")
-
-    # Clean up obsolete CSV files
-    for csv_f in out_dir.glob("human_review_sample_*.csv"):
-        try:
-            csv_f.unlink()
-        except Exception:
-            pass
 
 
 if __name__ == "__main__":

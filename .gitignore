@@ -19,10 +19,8 @@ env/
 .DS_Store
 Thumbs.db
 
-# Data & Results (large files, not tracked)
-*.json
-!package.json
-
-# Model caches
+# Large Raw Datasets & Benchmarks (>20MB)
+Agentic_results/raw/*.json
+DUDE_*.json
 *.bin
 *.safetensors

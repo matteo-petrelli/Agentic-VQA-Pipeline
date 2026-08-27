@@ -3,156 +3,111 @@
 LangGraph pipeline for diagnosing whether a question is answerable from document images, identifying possible unanswerability causes, and answering only after diagnostic checks pass.
 
 The agent produces three distinct states:
-
 - `answerable`: direct and contextually valid evidence supports an answer;
 - `unanswerable`: a question constraint or presupposition conflicts with the document;
 - `insufficient_evidence`: extraction quality or document coverage is not sufficient to decide.
 
 This distinction prevents OCR failures and missing pages from being counted automatically as corrupted questions.
 
-## Architecture
+---
+
+## 🏛️ Architecture
 
 ```text
 question + document pages
     -> question decomposition
     -> OCR, document elements, entity tags, quadrants
     -> candidate cause generation
-    -> model-specific prompt selection
-    -> diagnostic test loop
+    -> model-specific prompt routing
+    -> diagnostic test loop (LangGraph)
     -> coverage and answerability decision
     -> answerer, only when answerable
-    -> structured diagnosis
+    -> structured diagnosis & explanation
 ```
 
-The diagnostic causes include entity, value, temporal, relation, answer-type, document-element and spatial mismatches, unsupported presuppositions, ambiguous targets, missing evidence and extraction failures.
+Diagnostic causes include:
+`ENTITY_MISMATCH`, `ENTITY_MISSING`, `VALUE_MISMATCH`, `TEMPORAL_MISMATCH`, `SPATIAL_MISMATCH`, `DOCUMENT_ELEMENT_MISMATCH`, `UNSUPPORTED_PRESUPPOSITION`, `RELATION_MISMATCH`, `ANSWER_TYPE_MISMATCH`, `AMBIGUOUS_TARGET`, `MISSING_EVIDENCE`, `EXTRACTION_FAILURE`.
 
-## Prompt Catalog
+---
 
-The previous prompt experiments are available as named strategies under `diagnostic_agent/prompts/`:
-
-- `baseline`, `baseline_ocr`;
-- `docel`, `docel_cot_v1` through `docel_cot_v4`, `docel_cot_numvre`;
-- `nlp_tag`, `nlp_tag_cot`;
-- `nlp_list`, `nlp_list_cot`, `nlp_list_ocr`, `nlp_list_ocr_cot`;
-- `layout_v1` through `layout_v4`.
-
-Each prompt declares its required evidence, supported causes and whether document images must be attached. Historical strategy instructions are wrapped in a common JSON diagnostic contract so outputs remain comparable.
-
-No profile is asserted to be optimal. Prompt choices are initial configurations intended to be replaced after model-level analysis.
-
-## Model-Specific Selection
-
-Choose a default profile in `config.py`:
-
-```python
-PROMPT_PROFILE = "default"
-```
-
-Available profiles are `default`, `gemma3_focused`, `gemma4_focused`, and `qwen3vl_focused`.
-
-Map models to profiles:
-
-```python
-MODEL_PROMPT_PROFILES = {
-    "gemma3": "gemma3_focused",
-    "gemma4": "gemma4_focused",
-    "qwen3-vl": "qwen3vl_focused",
-}
-```
-
-Override individual causes or control prompts for one model:
-
-```python
-MODEL_PROMPT_OVERRIDES = {
-    "qwen2.5vl": {
-        "answerer_prompt": "docel_cot_v4",
-        "verifier_prompt": "answerability_verifier_v1",
-        "cause_prompts": {
-            "VALUE_MISMATCH": "nlp_tag_cot",
-            "SPATIAL_MISMATCH": "layout_v4",
-        },
-    },
-}
-```
-
-The same overrides can be supplied at runtime as a JSON file:
-
-```bash
-python run_experiments.py \
-    --model qwen2.5vl:3b \
-  --prompt-profile default \
-  --prompt-overrides prompt_overrides.json
-```
-
-An incompatible prompt/cause combination fails during agent initialization and lists compatible candidates.
-
-## Project Structure
+## 📁 Repository Structure
 
 ```text
-diagnostic_agent/
-    agent.py              public agent API
-    engine.py             Ollama, DOTS.OCR and GLiNER integration
-    evidence.py           multi-page evidence extraction and coverage
-    graph.py              LangGraph assembly and routes
-    nodes.py              diagnostic nodes and decision policy
-    parsing.py            structured VLM output normalization
-    profiles.py           selectable prompt profiles and overrides
-    schemas.py            state, causes and prompt contracts
-    prompts/              all specialized prompt families
-tests/
-    test_diagnostic_agent.py
-agentic_pipeline.py       stable pipeline facade
-config.py                 models, paths, profiles and thresholds
-run_experiments.py        dataset runner with checkpointing
-evaluate_results.py       QUR, FUR, causes, coverage and prompt metrics
-proposta_agente_prompt_routing.md
+Agentic-VQA-Pipeline/
+│
+├── README.md                           # Overview del progetto e quickstart
+├── requirements.txt                    # Dipendenze Python
+├── config.py                           # Parametri globali (GPU, VLM, token limits, percorsi)
+├── kaggle_utils.py                     # Bootstrap ambiente, GPU detection & Ollama manager
+├── agentic_pipeline.py                 # API Python entrypoint per l'agente
+│
+├── diagnostic_agent/                   # [CORE ENGINE] Architettura LangGraph & VLM Engine
+│   ├── agent.py                        # DiagnosticAgent orchestrator
+│   ├── graph.py                        # Definizione StateGraph e routing nodi
+│   ├── nodes.py                        # Nodi decisori, validatori ed estrattori
+│   ├── schemas.py                      # Schemi Pydantic e contratti di stato
+│   ├── engine.py                       # VLM inference (Ollama & Transformers) + DOTS/GLiNER
+│   ├── evidence.py                     # Estrattore evidenze e coverage multi-pagina
+│   ├── parsing.py                      # Parser JSON robusto e fuzzy normalizer
+│   ├── profiles.py                     # Profili di routing prompt specifici per modello
+│   └── prompts/                        # Catalogo strategie di prompting (docel, layout, nlp, ecc.)
+│
+├── notebooks/                          # [KAGGLE RUNNERS] Notebook pronti per l'esecuzione
+│   ├── kaggle_dual_t4_pipeline.ipynb       # Runner per Gemma 3 / Gemma 4 / Qwen 2.5 (Dual T4)
+│   ├── kaggle_qwen3vl_8b_pipeline.ipynb    # Runner per Qwen3-VL 8B (Dual T4 + Context esteso)
+│   └── kaggle_phi35_vision_pipeline.ipynb  # Runner per Phi-3.5-Vision (HuggingFace FP16 nativo)
+│
+├── scripts/                            # [CLI TOOLS] Script di benchmark, sampling e utility
+│   ├── run_experiments.py              # Esecuzione benchmark DUDE da riga di comando
+│   ├── evaluate_diagnostic_accuracy.py # Calcolo metriche forensi e precision/recall cause
+│   ├── evaluate_results.py             # Valutazione base delle risposte
+│   ├── generate_human_review_sample.py # Stratified sampling (5 macro-cat) + LLM Judge a 6 assi
+│   └── generate_google_forms_script.py # Generatore automatico Google Apps Script per Form
+│
+├── docs/                               # [DOCUMENTATION & REPORTS] Relazioni tecniche
+│   ├── report_analisi_risultati_vqa.md # Report comparativo completo sui modelli valutati
+│   ├── funzionamento_agente_spiegazione.md # Spiegazione tecnica approfondita dell'agente
+│   └── proposta_agente_prompt_routing.md   # Proposta architetturale del prompt routing
+│
+├── Agentic_results/                    # [EXPERIMENT ARTIFACTS] Risultati strutturati
+│   ├── raw/                            # Output JSON completi degli esperimenti (~20MB)
+│   ├── human_review/                   # Campioni 50 domande per la review umana
+│   │   ├── md/                         # File Markdown formattati con rubric
+│   │   └── json/                       # File JSON con rubric e note precompilate
+│   └── google_forms/                   # Script .js per generare i Google Form
+│
+└── tests/                              # [TESTS] Test unitari e di integrazione
+    └── test_diagnostic_agent.py
 ```
 
-## Setup
+---
 
-The production engine requires a CUDA environment for DOTS.OCR and GLiNER, plus a running Ollama server with the selected vision model.
+## 🎯 Model-Specific Prompt Profiles
 
+I profili ottimizzano le strategie di prompting per modello in base ai risultati empirici:
+
+- `gemma3_focused`: ottimizzato per Gemma 3 4B (Layout v4 + DocEl CoT v3);
+- `gemma4_focused`: ottimizzato per Gemma 4 E4B;
+- `qwen25_focused`: ottimizzato per Qwen 2.5 3B (NLP List OCR CoT + Layout v4);
+- `qwen3vl_focused`: ottimizzato per Qwen3-VL 8B;
+- `phi35_focused`: ottimizzato per Phi-3.5-Vision (Layout v1 + DocEl CoT v3, evita NLP).
+
+---
+
+## 🚀 Quickstart
+
+### 1. Esecuzione su Kaggle
+Carica il notebook corrispondente al modello da [`notebooks/`](notebooks/) su Kaggle con **GPU T4 x2** e **Internet: On**.
+
+### 2. Generazione Campioni per Human Review (Stratified Sampling)
+Esegui il campionamento stratificato sulle 5 macro-categorie (10 domande per categoria = 50 totali):
 ```bash
-python -m pip install -r requirements.txt
-ollama serve
-ollama pull qwen2.5vl:3b
+python scripts/generate_human_review_sample.py --all
 ```
 
-Update dataset paths and model settings in `config.py`, then run:
-
+### 3. Generazione Google Forms per la Revisione Umana
+Genera gli script Google Apps Script (`.js`) per creare istantaneamente i form di valutazione:
 ```bash
-python run_experiments.py --model qwen2.5vl:3b --prompt-profile default
-python evaluate_results.py --file /path/to/unanswerability_diagnostic_results.json
+python scripts/generate_google_forms_script.py
 ```
-
-## Output
-
-Each `agentic_result` contains:
-
-```json
-{
-  "answerability": "unanswerable",
-  "primary_cause": "VALUE_MISMATCH",
-  "secondary_causes": [],
-  "diagnostic_results": [],
-  "evidence_coverage": 1.0,
-  "final_answer": "Unable to determine",
-  "answerability_confidence": 3,
-  "cause_confidence": 3,
-  "answer_confidence": null,
-    "prompt_profile": "default@qwen2.5vl:3b",
-  "prompts_used": ["question_analysis_v1", "nlp_tag_cot"],
-  "tests_run": 1,
-  "trace": []
-}
-```
-
-QUR and FUR use only the explicit `unanswerable` state. `insufficient_evidence` is reported separately.
-
-## Tests
-
-The graph can be tested without GPU, Ollama or model downloads:
-
-```bash
-python -m unittest discover -s tests -v
-```
+Incolla il contenuto dello script `.js` su [script.google.com](https://script.google.com/) ed esegui `createHumanReviewForm()`.
