@@ -270,10 +270,12 @@ class DocumentEngine:
     ) -> str:
         message: dict[str, Any] = {"role": "user", "content": prompt}
         if image_paths:
-            message["images"] = [
-                _image_to_base64(_resize_image(self._resolve_image(path)))
-                for path in image_paths
-            ]
+            # Pass image file paths directly to Ollama (same approach as
+            # VQA_Experiments/models/ollama_model.py).  Ollama reads the files
+            # itself and handles its own vision tokenisation, which avoids the
+            # quality loss and payload bloat caused by resizing + base64.
+            resolved = [self._resolve_image(p) for p in image_paths]
+            message["images"] = resolved
         payload: dict[str, Any] = {
             "model": config.OLLAMA_VLM,
             "messages": [message],
@@ -284,18 +286,23 @@ class DocumentEngine:
                     config.AGENT_TEMPERATURE if temperature is None else temperature
                 ),
                 "num_predict": config.VLM_MAX_TOKENS,
-                "num_ctx": getattr(config, "VLM_NUM_CTX", 8192),
+                "num_ctx": getattr(config, "VLM_NUM_CTX", 16384),
             },
         }
-        if json_mode:
+        # Only enforce Ollama's strict JSON grammar when explicitly enabled.
+        # By default OLLAMA_FORCE_JSON is False because the GBNF grammar
+        # conflicts with several model families (Qwen3, etc.).  The pipeline
+        # parser parse_json_object() handles free-form extraction robustly.
+        use_format_json = json_mode and getattr(config, "OLLAMA_FORCE_JSON", False)
+        if use_format_json:
             payload["format"] = "json"
-        
+
         try:
             response = requests.post(config.OLLAMA_URL, json=payload, timeout=config.OLLAMA_TIMEOUT)
             response.raise_for_status()
         except requests.HTTPError:
-            # If Ollama returned 400 with format="json", retry without format="json"
-            if json_mode:
+            # If Ollama returned 400 with format="json", retry without it
+            if use_format_json:
                 payload.pop("format", None)
                 response = requests.post(config.OLLAMA_URL, json=payload, timeout=config.OLLAMA_TIMEOUT)
                 response.raise_for_status()

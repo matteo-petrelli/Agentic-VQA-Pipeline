@@ -7,9 +7,15 @@ VLM_BACKEND = "ollama"
 OLLAMA_VLM = "qwen2.5vl:3b"
 OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_TIMEOUT = 300
-VLM_NUM_CTX = 8192      # Context window size (input prompt + image patch tokens)
+VLM_NUM_CTX = 16384     # Context window size (input prompt + image patch tokens)
 VLM_MAX_TOKENS = 1536   # Generation token limit (output response)
 AGENT_TEMPERATURE = 0.0
+
+# Whether to send format="json" to Ollama (GBNF-constrained output).
+# Disable for models that conflict with strict JSON grammar (e.g. Qwen3-VL).
+# When False, the pipeline relies on parse_json_object() to extract JSON from
+# free-form text, which is more robust across model families.
+OLLAMA_FORCE_JSON = False
 
 # HuggingFace transformers backend (used when VLM_BACKEND = "transformers")
 HF_VLM_MODEL_NAME = "microsoft/Phi-3.5-vision-instruct"

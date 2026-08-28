@@ -228,11 +228,10 @@ def start_ollama(
         json={
             "model": model_name,
             "messages": [{"role": "user", "content": 'Return only this JSON: {"ready": true}'}],
-            "format": "json",
             "stream": False,
             "think": False,
             "keep_alive": -1,
-            "options": {"temperature": 0, "num_predict": 32, "num_ctx": 8192},
+            "options": {"temperature": 0, "num_predict": 32, "num_ctx": 16384},
         },
         timeout=600,
     )
