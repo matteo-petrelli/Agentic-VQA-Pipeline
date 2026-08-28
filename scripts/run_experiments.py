@@ -61,6 +61,16 @@ def _image_paths(item: dict) -> list[str]:
     image_paths = item.get("image_paths", [])
     if not image_paths:
         doc_id = item.get("docId", "") or item.get("document_id", "") or item.get("doc_id", "")
+        if not doc_id:
+            # Fallback: the output JSON doesn't retain docId at root, extract from inner fields
+            vr_img = item.get("verification_result", {}).get("image_path", "")
+            if vr_img:
+                doc_id = os.path.basename(vr_img).split("_")[0]
+            elif item.get("original_entity") and isinstance(item["original_entity"], list):
+                page_id = item["original_entity"][0].get("page_id", "")
+                if page_id:
+                    doc_id = page_id.split("_")[0]
+
         if doc_id:
             img_dir = Path(config.IMAGE_DIR)
             image_paths = [str(p) for p in sorted(img_dir.glob(f"{doc_id}*"))]
