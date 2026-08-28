@@ -289,9 +289,25 @@ class DocumentEngine:
         }
         if json_mode:
             payload["format"] = "json"
-        response = requests.post(config.OLLAMA_URL, json=payload, timeout=config.OLLAMA_TIMEOUT)
-        response.raise_for_status()
-        return response.json()["message"]["content"]
+        
+        try:
+            response = requests.post(config.OLLAMA_URL, json=payload, timeout=config.OLLAMA_TIMEOUT)
+            response.raise_for_status()
+        except requests.HTTPError:
+            # If Ollama returned 400 with format="json", retry without format="json"
+            if json_mode:
+                payload.pop("format", None)
+                response = requests.post(config.OLLAMA_URL, json=payload, timeout=config.OLLAMA_TIMEOUT)
+                response.raise_for_status()
+            else:
+                raise
+
+        msg = response.json().get("message", {})
+        content = msg.get("content", "")
+        # If Ollama placed the response inside thinking, use it
+        if not content.strip() and msg.get("thinking"):
+            content = msg["thinking"]
+        return content
 
     # ------------------------------------------------------------------
     # HuggingFace Transformers backend (Phi-3.5-Vision, etc.)
