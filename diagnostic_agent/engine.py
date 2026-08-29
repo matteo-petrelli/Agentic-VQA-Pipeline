@@ -270,12 +270,18 @@ class DocumentEngine:
     ) -> str:
         message: dict[str, Any] = {"role": "user", "content": prompt}
         if image_paths:
-            # Pass image file paths directly to Ollama (same approach as
-            # VQA_Experiments/models/ollama_model.py).  Ollama reads the files
-            # itself and handles its own vision tokenisation, which avoids the
-            # quality loss and payload bloat caused by resizing + base64.
-            resolved = [self._resolve_image(p) for p in image_paths]
-            message["images"] = resolved
+            # L'API REST di Ollama (/api/chat) accetta SOLO Base64. Non accetta percorsi file.
+            # Convertiamo il raw file in Base64 per emulare il comportamento dell'SDK Python
+            # senza degradare la risoluzione dell'immagine (nessun ridimensionamento).
+            import base64
+            def file_to_b64(path):
+                with open(path, "rb") as f:
+                    return base64.b64encode(f.read()).decode("ascii")
+            
+            message["images"] = [
+                file_to_b64(self._resolve_image(p))
+                for p in image_paths
+            ]
         payload: dict[str, Any] = {
             "model": config.OLLAMA_VLM,
             "messages": [message],
