@@ -224,6 +224,7 @@ def start_ollama(
         "OLLAMA_KEEP_ALIVE": "-1",
         "OLLAMA_FLASH_ATTENTION": "1",
         "OLLAMA_MODELS": "/tmp/ollama_models",
+        "OLLAMA_NUM_CTX": "16384",
     })
     _ollama_log_handle = open(working / "ollama.log", "w", encoding="utf-8")
     _ollama_process = subprocess.Popen(
