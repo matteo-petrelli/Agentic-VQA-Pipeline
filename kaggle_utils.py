@@ -217,6 +217,8 @@ def start_ollama(
     except req.RequestException:
         pass
 
+    # OLLAMA_NUM_CTX is NOT a valid Ollama environment variable; context
+    # size must be baked into the model via a Modelfile (see below).
     ollama_env = os.environ.copy()
     ollama_env.update({
         "CUDA_VISIBLE_DEVICES": str(vlm_gpu),
@@ -224,7 +226,6 @@ def start_ollama(
         "OLLAMA_KEEP_ALIVE": "-1",
         "OLLAMA_FLASH_ATTENTION": "1",
         "OLLAMA_MODELS": "/tmp/ollama_models",
-        "OLLAMA_NUM_CTX": "16384",
     })
     _ollama_log_handle = open(working / "ollama.log", "w", encoding="utf-8")
     _ollama_process = subprocess.Popen(
@@ -251,6 +252,26 @@ def start_ollama(
         raise TimeoutError("Ollama did not become available within 120 seconds")
 
     subprocess.run(["ollama", "pull", model_name], env=ollama_env, check=True)
+
+    # ---- Create a custom model variant with num_ctx baked in ----
+    # The per-request "options.num_ctx" is unreliable in many Ollama
+    # versions: the KV cache allocated at first load wins.  Creating a
+    # custom model via Modelfile guarantees the context window.
+    import config as _cfg
+    _num_ctx = getattr(_cfg, "VLM_NUM_CTX", 16384)
+    modelfile_content = f"FROM {model_name}\nPARAMETER num_ctx {_num_ctx}\n"
+    modelfile_path = working / "Modelfile"
+    modelfile_path.write_text(modelfile_content, encoding="utf-8")
+    custom_model_name = f"{model_name.replace(':', '-')}-ctx{_num_ctx}"
+    print(f"Creating custom model '{custom_model_name}' with num_ctx={_num_ctx} ...")
+    subprocess.run(
+        ["ollama", "create", custom_model_name, "-f", str(modelfile_path)],
+        env=ollama_env, check=True,
+    )
+    # Update config so every subsequent call uses the custom model
+    _cfg.OLLAMA_VLM = custom_model_name
+    model_name = custom_model_name
+    print(f"Model '{custom_model_name}' ready (num_ctx={_num_ctx}).")
 
     api_url = f"{base_url}/api/chat"
     from PIL import Image

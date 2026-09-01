@@ -108,7 +108,12 @@ def main(
     print(f"Mode: {'RETRY FAILED QUESTIONS ONLY' if retry_failed else 'STANDARD / RESUME'}")
 
     # 1. Initialize Engine & Pipeline
-    config.OLLAMA_VLM = selected_model
+    # Use the Ollama model name from config (start_ollama may have created a
+    # custom model variant with baked-in num_ctx for reliable context sizing).
+    ollama_model = config.OLLAMA_VLM
+    if ollama_model != selected_model:
+        print(f"  (using Ollama model: {ollama_model})")
+    config.OLLAMA_VLM = ollama_model
     engine = engine or DocumentEngine()
     pipeline = AgenticPipeline(
         engine,
