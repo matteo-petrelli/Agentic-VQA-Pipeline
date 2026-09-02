@@ -22,10 +22,22 @@ def _resize_image(image_path: str, max_size: int = 768) -> PIL.Image.Image:
     with PIL.Image.open(image_path) as source:
         image = source.convert("RGB")
     width, height = image.size
+    
     if max(width, height) > max_size:
         scale = max_size / max(width, height)
+        new_w = int(width * scale)
+        new_h = int(height * scale)
+    else:
+        new_w = width
+        new_h = height
+        
+    # Ensure dimensions are multiples of 28 (Required by Qwen-VL / Phi-3.5 Vision architectures)
+    new_w = max(28, (new_w // 28) * 28)
+    new_h = max(28, (new_h // 28) * 28)
+    
+    if (new_w, new_h) != (width, height):
         image = image.resize(
-            (int(width * scale), int(height * scale)),
+            (new_w, new_h),
             PIL.Image.Resampling.LANCZOS,
         )
     return image
@@ -366,10 +378,12 @@ class DocumentEngine:
         end_token = "<|end|>\n"
 
         if not resolved_paths:
+            import PIL.Image
             full_prompt = (
-                f"{user_token}{effective_prompt}{end_token}{assistant_token}"
+                f"{user_token}<|image_1|>\n {effective_prompt}"
+                f"{end_token}{assistant_token}"
             )
-            images = None
+            images = PIL.Image.new("RGB", (28, 28), "white")
         elif len(resolved_paths) == 1:
             full_prompt = (
                 f"{user_token}<|image_1|>\n {effective_prompt}"
