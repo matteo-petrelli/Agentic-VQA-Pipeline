@@ -375,7 +375,7 @@ class DocumentEngine:
                 f"{user_token}<|image_1|>\n {effective_prompt}"
                 f"{end_token}{assistant_token}"
             )
-            images = PIL.Image.open(resolved_paths[0]).convert("RGB")
+            images = _resize_image(resolved_paths[0])
         else:
             image_tags = "".join(
                 f"<|image_{i + 1}|>\n" for i in range(len(resolved_paths))
@@ -384,7 +384,7 @@ class DocumentEngine:
                 f"{user_token}{image_tags} {effective_prompt}"
                 f"{end_token}{assistant_token}"
             )
-            images = [PIL.Image.open(p).convert("RGB") for p in resolved_paths]
+            images = [_resize_image(p) for p in resolved_paths]
 
         device = next(self._hf_vlm_model.parameters()).device
 
