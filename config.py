@@ -115,3 +115,8 @@ IMAGE_DIR = (
 )
 OUTPUT_JSON_PATH = "/kaggle/working/unanswerability_diagnostic_results.json"
 SAMPLING_PERCENTAGE = 0.1
+
+try:
+    from config_local import *
+except ImportError:
+    pass

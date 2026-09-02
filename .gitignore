@@ -24,3 +24,6 @@ Agentic_results/raw/*.json
 DUDE_*.json
 *.bin
 *.safetensors
+
+# Local Config
+config_local.py
