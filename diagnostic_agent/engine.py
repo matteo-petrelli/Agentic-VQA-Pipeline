@@ -126,6 +126,12 @@ class DocumentEngine:
             if not hasattr(DynamicCache, "get_max_length"):
                 DynamicCache.get_max_length = lambda self: None
                 print("Applied DynamicCache.get_max_length compatibility patch.")
+                
+            if not hasattr(DynamicCache, "get_usable_length"):
+                # Usually called as get_usable_length(new_seq_length, layer_idx)
+                # Returns how much of new_seq_length is usable.
+                DynamicCache.get_usable_length = lambda self, new_seq_length, *args, **kwargs: new_seq_length
+                print("Applied DynamicCache.get_usable_length compatibility patch.")
         except ImportError:
             pass
         # -------------------------------------------------------
