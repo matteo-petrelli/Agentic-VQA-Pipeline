@@ -21,6 +21,7 @@ OLLAMA_FORCE_JSON = False
 HF_VLM_MODEL_NAME = "microsoft/Phi-3.5-vision-instruct"
 HF_VLM_DEVICE = "cuda:1"
 HF_VLM_DTYPE = "float16"  # "float16", "bfloat16", or "float32"
+HF_VLM_QUANTIZE = None     # None (FP16), "8bit", or "4bit"
 HF_VLM_CACHE_DIR = "/tmp/hf_cache"
 
 # Evidence models

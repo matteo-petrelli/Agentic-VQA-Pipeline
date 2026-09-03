@@ -159,14 +159,40 @@ class DocumentEngine:
         model_config = AutoConfig.from_pretrained(
             config.HF_VLM_MODEL_NAME, trust_remote_code=True
         )
-        self._hf_vlm_model = AutoModelForCausalLM.from_pretrained(
-            config.HF_VLM_MODEL_NAME,
+
+        # Optional quantization via bitsandbytes
+        quantize_mode = getattr(config, "HF_VLM_QUANTIZE", None)
+        quantization_config = None
+        if quantize_mode == "8bit":
+            from transformers import BitsAndBytesConfig
+            quantization_config = BitsAndBytesConfig(
+                load_in_8bit=True,
+                llm_int8_enable_fp32_cpu_offload=True,
+            )
+            print("Using 8-bit quantization (INT8).")
+        elif quantize_mode == "4bit":
+            from transformers import BitsAndBytesConfig
+            quantization_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch_dtype,
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type="nf4",
+            )
+            print("Using 4-bit quantization (NF4).")
+
+        load_kwargs = dict(
             config=model_config,
             trust_remote_code=True,
             torch_dtype=torch_dtype,
             cache_dir=config.HF_VLM_CACHE_DIR,
             device_map={"": config.HF_VLM_DEVICE},
             attn_implementation="eager",
+        )
+        if quantization_config is not None:
+            load_kwargs["quantization_config"] = quantization_config
+
+        self._hf_vlm_model = AutoModelForCausalLM.from_pretrained(
+            config.HF_VLM_MODEL_NAME, **load_kwargs
         ).eval()
         self._hf_vlm_processor = AutoProcessor.from_pretrained(
             config.HF_VLM_MODEL_NAME, trust_remote_code=True
