@@ -18,7 +18,8 @@ import requests
 import config
 
 
-def _resize_image(image_path: str, max_size: int = 768) -> PIL.Image.Image:
+def _resize_image(image_path: str) -> PIL.Image.Image:
+    max_size = getattr(config, "MAX_IMAGE_SIZE", 768)
     with PIL.Image.open(image_path) as source:
         image = source.convert("RGB")
     width, height = image.size
@@ -320,9 +321,16 @@ class DocumentEngine:
                 _image_to_base64(_resize_image(self._resolve_image(path)))
                 for path in image_paths
             ]
+        # Qwen3 models ignore Ollama's "think" flag; they need /no_think in
+        # a system message to truly suppress chain-of-thought output.
+        messages: list[dict[str, Any]] = []
+        model_lower = config.OLLAMA_VLM.lower()
+        if "qwen3" in model_lower:
+            messages.append({"role": "system", "content": "/no_think"})
+        messages.append(message)
         payload: dict[str, Any] = {
             "model": config.OLLAMA_VLM,
-            "messages": [message],
+            "messages": messages,
             "stream": False,
             "think": False,
             "options": {

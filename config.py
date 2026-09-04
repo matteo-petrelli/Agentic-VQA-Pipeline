@@ -23,6 +23,7 @@ HF_VLM_DEVICE = "cuda:1"
 HF_VLM_DTYPE = "float16"  # "float16", "bfloat16", or "float32"
 HF_VLM_QUANTIZE = None     # None (FP16), "8bit", or "4bit"
 HF_VLM_CACHE_DIR = "/tmp/hf_cache"
+MAX_IMAGE_SIZE = 768       # Max dimension for resizing images before passing to VLMs
 
 # Evidence models
 EVIDENCE_DEVICE = "cuda:0"
