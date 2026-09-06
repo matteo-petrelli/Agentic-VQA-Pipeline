@@ -8,7 +8,7 @@ OLLAMA_VLM = "qwen2.5vl:3b"
 OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_TIMEOUT = 300
 VLM_NUM_CTX = 32768     # Context window size (input prompt + image patch tokens)
-VLM_MAX_TOKENS = 1536   # Generation token limit (output response)
+VLM_MAX_TOKENS = 4096   # Generation token limit (output response)
 AGENT_TEMPERATURE = 0.0
 
 # Whether to send format="json" to Ollama (GBNF-constrained output).
