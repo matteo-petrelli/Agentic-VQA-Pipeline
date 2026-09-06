@@ -187,7 +187,7 @@ class DocumentEngine:
             torch_dtype=torch_dtype,
             cache_dir=config.HF_VLM_CACHE_DIR,
             device_map={"": config.HF_VLM_DEVICE},
-            attn_implementation="eager",
+            attn_implementation="sdpa",
         )
         if quantization_config is not None:
             load_kwargs["quantization_config"] = quantization_config
@@ -338,7 +338,7 @@ class DocumentEngine:
                     config.AGENT_TEMPERATURE if temperature is None else temperature
                 ),
                 "num_predict": config.VLM_MAX_TOKENS,
-                "num_ctx": getattr(config, "VLM_NUM_CTX", 16384),
+                "num_ctx": getattr(config, "VLM_NUM_CTX", 32768),
             },
         }
         # Only enforce Ollama's strict JSON grammar when explicitly enabled.
