@@ -7,7 +7,7 @@ VLM_BACKEND = "ollama"
 OLLAMA_VLM = "qwen2.5vl:3b"
 OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_TIMEOUT = 300
-VLM_NUM_CTX = 16384     # Context window size (input prompt + image patch tokens)
+VLM_NUM_CTX = 32768     # Context window size (input prompt + image patch tokens)
 VLM_MAX_TOKENS = 1536   # Generation token limit (output response)
 AGENT_TEMPERATURE = 0.0
 
@@ -23,7 +23,7 @@ HF_VLM_DEVICE = "cuda:1"
 HF_VLM_DTYPE = "float16"  # "float16", "bfloat16", or "float32"
 HF_VLM_QUANTIZE = None     # None (FP16), "8bit", or "4bit"
 HF_VLM_CACHE_DIR = "/tmp/hf_cache"
-MAX_IMAGE_SIZE = 768       # Max dimension for resizing images before passing to VLMs
+MAX_IMAGE_SIZE = 1024       # Max dimension for resizing images before passing to VLMs
 
 # Evidence models
 EVIDENCE_DEVICE = "cuda:0"

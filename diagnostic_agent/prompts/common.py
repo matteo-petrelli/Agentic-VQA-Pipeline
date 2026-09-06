@@ -109,7 +109,7 @@ def make_strategy_spec(
     strategy: str,
     required_evidence: Iterable[str],
     supported_causes: Iterable[CauseCode],
-    include_images: bool = False,
+    include_images: bool = True,
 ) -> PromptSpec:
     requirements = frozenset(required_evidence)
 
