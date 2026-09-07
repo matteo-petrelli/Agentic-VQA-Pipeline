@@ -1,6 +1,8 @@
 import argparse
 import json
 import os
+
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import sys
 import traceback
 from pathlib import Path
@@ -93,6 +95,15 @@ def is_failed_result(result: dict | None) -> bool:
     )
 
 
+def _item_key(item: dict) -> tuple:
+    cq = str(item.get("corrupted_question", "")).strip()
+    oq = str(item.get("original_question", "")).strip()
+    img = item.get("verification_result", {}).get("image_path", "")
+    if not img and item.get("original_entity") and isinstance(item["original_entity"], list) and len(item["original_entity"]) > 0:
+        img = item["original_entity"][0].get("page_id", "")
+    return (cq, oq, os.path.basename(str(img)).strip())
+
+
 def main(
     model_name=None,
     profile_name=None,
@@ -180,6 +191,17 @@ def main(
             # Save updated checkpoint in-place
             save_checkpoint(config.OUTPUT_JSON_PATH, checkpoint_data)
 
+            # Free GPU memory and collect garbage between questions
+            try:
+                import gc
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                gc.collect()
+            except Exception:
+                pass
+
         print(f"\n=== Finished retrying: {recovered_count}/{len(failed_indices)} questions updated ===")
         print(f"Updated results saved to {config.OUTPUT_JSON_PATH}")
         return
@@ -203,27 +225,49 @@ def main(
     else:
         print(f"Loaded {len(questions)} questions from {config.INPUT_JSON_PATH}")
 
-    processed_count = len(processed_questions)
-    print(f"Found {processed_count} already processed questions. Resuming...")
+    # Build lookup of already processed results from checkpoint so resume works
+    # seamlessly even with sampled or out-of-order checkpoints
+    existing_results = {}
+    for item in processed_questions:
+        res = item.get("agentic_result")
+        if res and not is_failed_result(res):
+            existing_results[_item_key(item)] = res
 
-    if processed_count >= len(questions):
+    aligned_questions = []
+    already_done = 0
+    for item in questions:
+        item_copy = dict(item)
+        k = _item_key(item_copy)
+        if k in existing_results:
+            item_copy["agentic_result"] = existing_results[k]
+            already_done += 1
+        aligned_questions.append(item_copy)
+
+    checkpoint_data["corrupted_questions"] = aligned_questions
+
+    print(f"Found {already_done}/{len(aligned_questions)} already processed questions. Resuming remaining {len(aligned_questions) - already_done}...")
+
+    if already_done >= len(aligned_questions):
         print("All questions have been processed! Exiting.")
         return
 
-    for i in tqdm(range(processed_count, len(questions)), desc="Processing"):
-        item = questions[i]
+    for i in tqdm(range(len(aligned_questions)), desc="Processing"):
+        item = aligned_questions[i]
+        if item.get("agentic_result") is not None and not is_failed_result(item.get("agentic_result")):
+            continue
+
         q_text = item.get("corrupted_question", "")
         image_paths = _image_paths(item)
 
         if not image_paths:
-            print(f"  [Warning] No images found for question: {q_text[:50]}")
+            print(f"  [Warning] No images found for question #{i+1}: {q_text[:50]}")
             continue
 
         try:
             result = pipeline.process_question(q_text, image_paths)
             item["agentic_result"] = result
         except Exception as e:
-            print(f"  [Error] Processing failed: {e}")
+            print(f"  [Error] Processing failed on question #{i+1}: {e}")
             traceback.print_exc()
             item["agentic_result"] = {
                 "answerability": "insufficient_evidence",
@@ -240,10 +284,20 @@ def main(
                 "trace": [],
             }
 
-        checkpoint_data["corrupted_questions"].append(item)
         save_checkpoint(config.OUTPUT_JSON_PATH, checkpoint_data)
 
-    print(f"\n=== Finished processing {len(questions)} questions ===")
+        # Free GPU memory and collect garbage between questions
+        try:
+            import gc
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
+        except Exception:
+            pass
+
+    print(f"\n=== Finished processing {len(aligned_questions)} questions ===")
     print(f"Results saved to {config.OUTPUT_JSON_PATH}")
 
 

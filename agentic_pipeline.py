@@ -44,4 +44,16 @@ class AgenticPipeline:
         )
 
     def process_question(self, question: str, image_paths: list[str]) -> dict[str, Any]:
-        return self.agent.process_question(question, image_paths)
+        try:
+            return self.agent.process_question(question, image_paths)
+        finally:
+            try:
+                import gc
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                gc.collect()
+            except Exception:
+                pass
+
