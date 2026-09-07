@@ -187,7 +187,7 @@ class DocumentEngine:
             torch_dtype=torch_dtype,
             cache_dir=config.HF_VLM_CACHE_DIR,
             device_map={"": config.HF_VLM_DEVICE},
-            attn_implementation="sdpa",
+            attn_implementation="eager",
         )
         if quantization_config is not None:
             load_kwargs["quantization_config"] = quantization_config
