@@ -2,7 +2,7 @@ import argparse
 import json
 import os
 
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:False")
 import sys
 import traceback
 from pathlib import Path
