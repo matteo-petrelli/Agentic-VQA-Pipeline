@@ -3,6 +3,9 @@
 import re
 from typing import Any, Protocol
 
+import config
+
+
 from diagnostic_agent.evidence import EvidenceExtractor
 from diagnostic_agent.parsing import (
     normalize_answer_result,
@@ -173,9 +176,13 @@ class DiagnosticNodes:
             "cause": cause.value,
             "rationale": hypothesis.get("rationale", ""),
         }
+        img_paths = state["image_paths"] if spec.include_images else None
+        if img_paths and getattr(config, "ENABLE_PAGE_SELECTION", False):
+            max_imgs = getattr(config, "MAX_IMAGES_PER_PROMPT", 3)
+            img_paths = _select_relevant_images(state, max_imgs)
         response = self.engine.infer(
             spec.builder(context),
-            state["image_paths"] if spec.include_images else None,
+            img_paths,
             json_mode=True,
             temperature=0.0,
         )
@@ -269,9 +276,13 @@ class DiagnosticNodes:
     def run_answerer(self, state: AgentState) -> dict[str, Any]:
         spec = get_prompt(self.profile.answerer_prompt)
         context = {**dict(state), "mode": "answer"}
+        img_paths = state["image_paths"] if spec.include_images else None
+        if img_paths and getattr(config, "ENABLE_PAGE_SELECTION", False):
+            max_imgs = getattr(config, "MAX_IMAGES_PER_PROMPT", 3)
+            img_paths = _select_relevant_images(state, max_imgs)
         response = self.engine.infer(
             spec.builder(context),
-            state["image_paths"] if spec.include_images else None,
+            img_paths,
             json_mode=True,
             temperature=0.0,
         )
@@ -334,6 +345,30 @@ class DiagnosticNodes:
     @staticmethod
     def route_decision(state: AgentState) -> str:
         return state.get("next_action", "finalize")
+
+
+def _select_relevant_images(state: AgentState, max_images: int = 3) -> list[str]:
+    image_paths = state.get("image_paths", [])
+    if len(image_paths) <= max_images:
+        return image_paths
+
+    pages = state.get("pages", [])
+    if not pages:
+        return image_paths[:max_images]
+
+    question = str(state.get("question", "")).lower()
+    q_entities = [str(e).lower() for e in state.get("question_entities", [])]
+    q_words = {w.strip("?,.:;\"'()") for w in question.split() if len(w) > 3}
+
+    scored = []
+    for p in pages:
+        t = str(p.get("plain_text", "")).lower()
+        score = sum(5 for e in q_entities if e and e in t) + sum(1 for w in q_words if w and w in t)
+        scored.append((score, p.get("page", 999), p.get("image_path")))
+
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    top_paths = set(p[2] for p in scored[:max_images])
+    return [img for img in image_paths if img in top_paths]
 
 
 def _contains_temporal_signal(question: str) -> bool:

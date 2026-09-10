@@ -25,6 +25,12 @@ HF_VLM_QUANTIZE = None     # None (FP16), "8bit", or "4bit"
 HF_VLM_CACHE_DIR = "/tmp/hf_cache"
 MAX_IMAGE_SIZE = 1024       # Max dimension for resizing images before passing to VLMs
 
+# Page Selection (Ablation Study)
+# True = Entity-guided Page Selection (Proposed approach, filters Top-K relevant pages)
+# False = Direct feeding (Baseline approach, feeds all pages, triggers OOM on long documents)
+ENABLE_PAGE_SELECTION = True
+MAX_IMAGES_PER_PROMPT = 3   # Applied only if ENABLE_PAGE_SELECTION is True
+
 # Evidence models
 EVIDENCE_DEVICE = "cuda:0"
 DOTS_MODEL_PATH = "strangervisionhf/dots.ocr-base-fix"

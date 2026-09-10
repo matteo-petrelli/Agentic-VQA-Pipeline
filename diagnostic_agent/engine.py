@@ -160,6 +160,16 @@ class DocumentEngine:
         model_config = AutoConfig.from_pretrained(
             config.HF_VLM_MODEL_NAME, trust_remote_code=True
         )
+        model_config._attn_implementation = "eager"
+
+        # Compatibility patch for DynamicCache in transformers >= 4.43
+        from transformers import DynamicCache
+        if not hasattr(DynamicCache, "seen_tokens"):
+            DynamicCache.seen_tokens = property(lambda self: self.get_seq_length())
+        if not hasattr(DynamicCache, "get_usable_length"):
+            DynamicCache.get_usable_length = lambda self, new_seq_length, layer_idx=0: self.get_seq_length(layer_idx)
+        if not hasattr(DynamicCache, "get_max_length"):
+            DynamicCache.get_max_length = lambda self: getattr(self, "max_cache_len", None)
 
         # Optional quantization via bitsandbytes
         quantize_mode = getattr(config, "HF_VLM_QUANTIZE", None)
@@ -196,7 +206,7 @@ class DocumentEngine:
             config.HF_VLM_MODEL_NAME, **load_kwargs
         ).eval()
         self._hf_vlm_processor = AutoProcessor.from_pretrained(
-            config.HF_VLM_MODEL_NAME, trust_remote_code=True
+            config.HF_VLM_MODEL_NAME, trust_remote_code=True, num_crops=4
         )
         print(f"HuggingFace VLM loaded on {config.HF_VLM_DEVICE}.")
 
@@ -397,6 +407,10 @@ class DocumentEngine:
         resolved_paths = []
         if image_paths:
             resolved_paths = [self._resolve_image(p) for p in image_paths]
+            if getattr(config, "ENABLE_PAGE_SELECTION", False):
+                max_imgs = getattr(config, "MAX_IMAGES_PER_PROMPT", 3)
+                if max_imgs and len(resolved_paths) > max_imgs:
+                    resolved_paths = resolved_paths[:max_imgs]
 
         # If json_mode is requested, wrap the prompt with a JSON instruction
         effective_prompt = prompt

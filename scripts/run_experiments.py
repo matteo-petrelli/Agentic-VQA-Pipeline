@@ -2,8 +2,12 @@ import argparse
 import json
 import os
 
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:False")
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 import traceback
 from pathlib import Path
 
@@ -151,10 +155,10 @@ def main(
         ]
 
         if not failed_indices:
-            print(f"✅ All {len(processed_questions)} questions in checkpoint are already successful! Nothing to retry.")
+            print(f"[OK] All {len(processed_questions)} questions in checkpoint are already successful! Nothing to retry.")
             return
 
-        print(f"\n🔄 Found {len(failed_indices)} failed questions out of {len(processed_questions)} total.")
+        print(f"\n[RETRY] Found {len(failed_indices)} failed questions out of {len(processed_questions)} total.")
         print("Starting targeted re-execution of failed questions...\n")
 
         recovered_count = 0

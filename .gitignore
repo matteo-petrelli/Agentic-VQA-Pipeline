@@ -27,3 +27,5 @@ DUDE_*.json
 
 # Local Config
 config_local.py
+scratch/
+Agentic_results/output_after_fix/
